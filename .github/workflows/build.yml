@@ -1,0 +1,44 @@
+name: Build and Deploy Nyra Chess
+
+on:
+  push:
+    branches: [ "main" ] # Kích hoạt khi push lên nhánh main
+  workflow_dispatch:      # Cho phép chạy thủ công từ tab Actions
+
+# Quyền cần thiết để deploy lên GitHub Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Đảm bảo chỉ có một deployment chạy tại một thời điểm
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      # Bước "build" cho static site: chỉ cần đóng gói toàn bộ thư mục gốc
+      - name: Build static site (prepare artifact)
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.' # Upload toàn bộ thư mục gốc làm artifact
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
