@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#10100f">
+  <title>Nyra Chess 1.0</title>
+  <link rel="stylesheet" href="style.css?v=200">
+</head>
+<body>
+  <div class="ambient ambient-one"></div>
+  <div class="ambient ambient-two"></div>
+  <header class="topbar">
+    <a class="brand" href="#" aria-label="Nyra Chess trang chủ">
+      <span class="brand-mark">♞</span>
+      <span><strong>NYRA</strong><small>CHESS LAB · C++</small></span>
+    </a>
+    <div class="top-status"><span class="status-dot"></span><span id="connectionLabel">BÀN CỜ SẴN SÀNG</span></div>
+  </header>
+
+  <main class="layout">
+    <section class="intro">
+      <p class="eyebrow">POWERED BY C++ ENGINE</p>
+      <h1>Thử thách<br><span>trí tuệ của Nyra.</span></h1>
+      <div class="intro-tags"><span>♟ Luật cờ chuẩn</span><span>⏱ Đồng hồ</span><span>📊 Thống kê</span><span>⚔️ Arena</span></div>
+    </section>
+
+    <section class="game-shell" aria-label="Bàn cờ Nyra">
+      <!-- TABS -->
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="play">Chơi cờ</button>
+        <button class="tab-btn" data-tab="arena">Nyra Arena</button>
+        <button class="tab-btn" data-tab="stats">Thống kê</button>
+        <button class="tab-btn" data-tab="history">Lịch sử</button>
+      </div>
+
+      <!-- TAB: PLAY -->
+      <div id="tab-play" class="tab-content active">
+        <div class="game-head">
+          <div class="opponent">
+            <div class="avatar">N</div>
+            <div><strong>Nyra Chess</strong><small id="engineMode">NYRA API</small></div>
+          </div>
+          <div class="turn-chip"><span class="turn-indicator"></span><span id="turnLabel">Lượt Trắng</span></div>
+        </div>
+        
+        <div class="clock-container" id="clock-black"><span class="clock-icon">♚</span><span class="clock-time" id="timeBlack">10:00</span></div>
+        
+        <div class="board-wrap">
+          <div class="rank-labels" aria-hidden="true"><span>8</span><span>7</span><span>6</span><span>5</span><span>4</span><span>3</span><span>2</span><span>1</span></div>
+          <div id="board" class="board" role="grid" aria-label="Bàn cờ vua"></div>
+          <div class="file-labels" aria-hidden="true"><span>a</span><span>b</span><span>c</span><span>d</span><span>e</span><span>f</span><span>g</span><span>h</span></div>
+        </div>
+        
+        <div class="clock-container" id="clock-white"><span class="clock-icon">♔</span><span class="clock-time" id="timeWhite">10:00</span></div>
+
+        <div class="game-status" aria-live="polite">
+          <span class="status-icon" id="statusIcon">✦</span>
+          <div><strong id="statusTitle">Trận đấu sẵn sàng</strong><small id="statusText">Chọn một quân Trắng để bắt đầu.</small></div>
+        </div>
+
+        <div class="controls">
+          <button id="newGameBtn" class="btn btn-primary"><span>↻</span> Ván mới</button>
+          <button id="pauseBtn" class="btn btn-secondary"><span>⏸</span> Tạm dừng</button>
+          <button id="undoBtn" class="btn btn-secondary"><span>↶</span> Hoàn tác</button>
+          <button id="flipBtn" class="btn btn-secondary"><span>⇅</span> Đảo bàn</button>
+        </div>
+      </div>
+
+      <!-- TAB: ARENA -->
+      <div id="tab-arena" class="tab-content">
+        <div class="panel-title"><span class="gold-symbol">⚔️</span><h2>Đấu trường AI</h2></div>
+        <p class="panel-desc">Cho phép AI tự đấu với nhau. Đã tích hợp Stockfish API để test Nyra!</p>
+        
+        <div class="arena-controls">
+          <div class="control-group">
+            <label>Quân Trắng</label>
+            <select id="arenaWhite">
+              <option value="api">Nyra API</option>
+              <option value="stockfish">Stockfish</option>
+              <option value="random">Random Bot</option>
+            </select>
+          </div>
+          <div class="control-group">
+            <label>Quân Đen</label>
+            <select id="arenaBlack">
+              <option value="api">Nyra API</option>
+              <option value="stockfish">Stockfish</option>
+              <option value="random">Random Bot</option>
+            </select>
+          </div>
+          <div class="control-group">
+            <label>Số ván</label>
+            <select id="arenaGames">
+              <option value="1">1 ván</option>
+              <option value="3">3 ván</option>
+            </select>
+          </div>
+        </div>
+        
+        <div class="arena-actions">
+          <button id="btnStartArena" class="btn btn-primary">Bắt đầu đấu</button>
+          <button id="btnStopArena" class="btn btn-secondary" disabled>Dừng khẩn cấp</button>
+        </div>
+
+        <div class="arena-results" id="arenaResults" style="display: none;">
+          <h3 id="arenaProgress">Đang chạy...</h3>
+          <div class="arena-scoreboard">
+            <div>Trắng thắng: <strong id="scoreWhite">0</strong></div>
+            <div>Hòa: <strong id="scoreDraw">0</strong></div>
+            <div>Đen thắng: <strong id="scoreBlack">0</strong></div>
+          </div>
+          <div id="arenaLog" class="arena-log"></div>
+        </div>
+      </div>
+
+      <!-- TAB: STATS -->
+      <div id="tab-stats" class="tab-content">
+        <div class="panel-title"><span class="gold-symbol">📊</span><h2>Thống kê của bạn</h2></div>
+        <div class="stats-dashboard">
+          <div class="stat-box"><span class="stat-label">Tổng số ván</span><span class="stat-value" id="statTotal">0</span></div>
+          <div class="stat-box good"><span class="stat-label">Thắng</span><span class="stat-value" id="statWins">0</span></div>
+          <div class="stat-box bad"><span class="stat-label">Thua</span><span class="stat-value" id="statLosses">0</span></div>
+          <div class="stat-box"><span class="stat-label">Hòa</span><span class="stat-value" id="statDraws">0</span></div>
+        </div>
+      </div>
+
+      <!-- TAB: HISTORY -->
+      <div id="tab-history" class="tab-content">
+        <div class="panel-title"><span class="gold-symbol">⌁</span><h2>Lịch sử nước đi</h2></div>
+        <div id="moveHistory" class="move-history"></div>
+        <button id="reviewBtn" class="btn btn-primary full-width"><span>✦</span> Phân tích ván bằng Nyra</button>
+        <div id="reviewResult" class="review-result"></div>
+      </div>
+    </section>
+
+    <aside class="side-panel">
+      <section class="panel-card">
+        <div class="panel-title"><span class="gold-symbol">⏱</span><h2>Thời gian</h2></div>
+        <select id="timeControlSelect" class="time-select">
+          <option value="unlimited">Không giới hạn</option>
+          <option value="180">3 phút</option>
+          <option value="180+2">3 phút + 2s</option>
+          <option value="300">5 phút</option>
+          <option value="600" selected>10 phút</option>
+        </select>
+      </section>
+
+      <section class="panel-card">
+        <div class="panel-title"><span class="gold-symbol">◈</span><h2>Engine của bạn</h2></div>
+        <input id="endpointInput" type="url" placeholder="https://nyra-chess-api.onrender.com/move">
+        <button id="saveEndpointBtn" class="btn btn-outline full-width">Lưu cấu hình API</button>
+        <div id="apiState" class="api-state"><span class="state-dot"></span><span>Chưa kết nối</span></div>
+      </section>
+    </aside>
+  </main>
+  <script type="module" src="app.js?v=204"></script>
+</body>
+                                   </html>
