@@ -5,12 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#10100f">
   <title>Nyra Chess 1.0</title>
-  <link rel="stylesheet" href="style.css?v=200">
+  <link rel="stylesheet" href="style.css?v=210">
 </head>
 <body>
   <div class="ambient ambient-one"></div>
   <div class="ambient ambient-two"></div>
   <header class="topbar">
+    <button class="hamburger" id="hamburgerBtn" aria-label="Menu">☰</button>
     <a class="brand" href="#" aria-label="Nyra Chess trang chủ">
       <span class="brand-mark">♞</span>
       <span><strong>NYRA</strong><small>CHESS LAB · C++</small></span>
@@ -18,13 +19,18 @@
     <div class="top-status"><span class="status-dot"></span><span id="connectionLabel">BÀN CỜ SẴN SÀNG</span></div>
   </header>
 
-  <main class="layout">
-    <section class="intro">
-      <p class="eyebrow">POWERED BY C++ ENGINE</p>
-      <h1>Thử thách<br><span>trí tuệ của Nyra.</span></h1>
-      <div class="intro-tags"><span>♟ Luật cờ chuẩn</span><span>⏱ Đồng hồ</span><span>📊 Thống kê</span><span>⚔️ Arena</span></div>
-    </section>
+  <nav class="navdrawer" id="navDrawer">
+    <a class="navdrawer-item" data-drawer="play" href="#" id="drawerPlay"><span>♟</span> Chơi cờ</a>
+    <a class="navdrawer-item" data-drawer="arena" href="#" id="drawerArena"><span>⚔️</span> Đấu trường AI</a>
+    <a class="navdrawer-item" data-drawer="stats" href="#" id="drawerStats"><span>📊</span> Thống kê</a>
+    <a class="navdrawer-item" data-drawer="history" href="#" id="drawerHistory"><span>⌁</span> Lịch sử &amp; Phân tích</a>
+    <a class="navdrawer-item" data-action="import" href="#" id="drawerImport"><span>📥</span> Nhập PGN</a>
+  </nav>
 
+  <div class="drawer-overlay" id="drawerOverlay"></div>
+  <div class="move-board-panel" id="moveBoardPanel"></div>
+
+  <main class="layout">
     <section class="game-shell" aria-label="Bàn cờ Nyra">
       <!-- TABS -->
       <div class="tabs">
@@ -39,24 +45,41 @@
         <div class="game-head">
           <div class="opponent">
             <div class="avatar">N</div>
-            <div><strong>Nyra Chess</strong><small id="engineMode">NYRA API</small></div>
+            <div><select id="opponentSelect" class="opp-select" aria-label="Chọn đối thủ">
+              <option value="nyra">Nyra Chess</option>
+              <option value="sf1000">Stockfish ~1000</option>
+              <option value="sf1500">Stockfish 1500</option>
+              <option value="sf2000">Stockfish 2000</option>
+              <option value="sf2500">Stockfish 2500</option>
+              <option value="sf2750">Stockfish 2750</option>
+              <option value="sf3000">Stockfish 3000</option>
+            </select><small id="engineMode">NYRA API</small></div>
           </div>
           <div class="turn-chip"><span class="turn-indicator"></span><span id="turnLabel">Lượt Trắng</span></div>
         </div>
-        
-        <div class="clock-container" id="clock-black"><span class="clock-icon">♚</span><span class="clock-time" id="timeBlack">10:00</span></div>
-        
+
         <div class="board-wrap">
           <div class="rank-labels" aria-hidden="true"><span>8</span><span>7</span><span>6</span><span>5</span><span>4</span><span>3</span><span>2</span><span>1</span></div>
           <div id="board" class="board" role="grid" aria-label="Bàn cờ vua"></div>
           <div class="file-labels" aria-hidden="true"><span>a</span><span>b</span><span>c</span><span>d</span><span>e</span><span>f</span><span>g</span><span>h</span></div>
         </div>
-        
-        <div class="clock-container" id="clock-white"><span class="clock-icon">♔</span><span class="clock-time" id="timeWhite">10:00</span></div>
+
+        <div class="board-nav">
+          <button id="navStart" class="nav-btn" type="button" title="Về đầu ván" aria-label="Về đầu ván">⏮</button>
+          <button id="navPrev" class="nav-btn" type="button" title="Nước trước (←)" aria-label="Nước trước">◀</button>
+          <span id="navCounter" class="nav-counter">0/0</span>
+          <button id="navNext" class="nav-btn" type="button" title="Nước sau (→)" aria-label="Nước sau">▶</button>
+          <button id="navEnd" class="nav-btn" type="button" title="Về nước hiện tại" aria-label="Về nước hiện tại">⏭</button>
+        </div>
 
         <div class="game-status" aria-live="polite">
           <span class="status-icon" id="statusIcon">✦</span>
           <div><strong id="statusTitle">Trận đấu sẵn sàng</strong><small id="statusText">Chọn một quân Trắng để bắt đầu.</small></div>
+        </div>
+
+        <div class="clock-panel">
+          <div class="clock-container" id="clock-black"><span class="clock-icon">♚</span><span class="clock-time" id="timeBlack">10:00</span></div>
+          <div class="clock-container" id="clock-white"><span class="clock-icon">♔</span><span class="clock-time" id="timeWhite">10:00</span></div>
         </div>
 
         <div class="controls">
@@ -65,52 +88,96 @@
           <button id="undoBtn" class="btn btn-secondary"><span>↶</span> Hoàn tác</button>
           <button id="flipBtn" class="btn btn-secondary"><span>⇅</span> Đảo bàn</button>
         </div>
+
+        <div class="play-side">
+          <div class="panel-card game-info card pgn-box" id="pgnBox">
+            <div class="panel-title"><span class="gold-symbol">📜</span><h2>PGN</h2></div>
+            <div class="pgn-actions">
+              <button id="scrollPgnBtn" class="btn btn-outline">Xem PGN</button>
+              <button id="copyPgnBtn" class="btn btn-outline">Copy PGN</button>
+              <button id="downloadPgnBtn" class="btn btn-outline">Tải PGN</button>
+            </div>
+            <textarea class="pgn-text" id="pgnText" readonly placeholder="Chưa có ván cờ nào."></textarea>
+          </div>
+          <div class="panel-card card review-box" id="reviewBox">
+            <div class="panel-title"><span class="gold-symbol">✦</span><h2>Kết quả &amp; phân tích</h2></div>
+            <div id="reviewResult" class="review-result"></div>
+            <div class="review-actions" id="reviewActions">
+              <button id="reviewBtn" class="btn btn-primary full-width"><span>✦</span> Phân tích lại ván này</button>
+              <button id="boardReviewBtn" class="btn btn-secondary full-width"><span>♟</span> Xem lại bàn cờ với nhãn</button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- TAB: ARENA -->
       <div id="tab-arena" class="tab-content">
-        <div class="panel-title"><span class="gold-symbol">⚔️</span><h2>Đấu trường AI</h2></div>
-        <p class="panel-desc">Cho phép AI tự đấu với nhau. Đã tích hợp Stockfish API để test Nyra!</p>
-        
-        <div class="arena-controls">
-          <div class="control-group">
-            <label>Quân Trắng</label>
-            <select id="arenaWhite">
-              <option value="api">Nyra API</option>
-              <option value="stockfish">Stockfish</option>
-              <option value="random">Random Bot</option>
-            </select>
+        <div class="ar-top">
+          <div class="panel-title"><span class="gold-symbol">⚔️</span><h2>Nyra Arena</h2></div>
+          <div class="ar-top-btns">
+            <button id="arToggleSetup" class="ar-chip" type="button">▴ Thu gọn</button>
+            <button id="arVideoBtn" class="ar-chip" type="button">🎬 Quay video</button>
           </div>
-          <div class="control-group">
-            <label>Quân Đen</label>
-            <select id="arenaBlack">
-              <option value="api">Nyra API</option>
-              <option value="stockfish">Stockfish</option>
-              <option value="random">Random Bot</option>
-            </select>
-          </div>
-          <div class="control-group">
-            <label>Số ván</label>
-            <select id="arenaGames">
-              <option value="1">1 ván</option>
-              <option value="3">3 ván</option>
-            </select>
-          </div>
-        </div>
-        
-        <div class="arena-actions">
-          <button id="btnStartArena" class="btn btn-primary">Bắt đầu đấu</button>
-          <button id="btnStopArena" class="btn btn-secondary" disabled>Dừng khẩn cấp</button>
         </div>
 
-        <div class="arena-results" id="arenaResults" style="display: none;">
-          <h3 id="arenaProgress">Đang chạy...</h3>
-          <div class="arena-scoreboard">
-            <div>Trắng thắng: <strong id="scoreWhite">0</strong></div>
-            <div>Hòa: <strong id="scoreDraw">0</strong></div>
-            <div>Đen thắng: <strong id="scoreBlack">0</strong></div>
+        <div id="arSetup" class="ar-setup">
+          <div class="ar-sides">
+            <div class="ar-side" id="arSideA"></div>
+            <div class="ar-side" id="arSideB"></div>
           </div>
-          <div id="arenaLog" class="arena-log"></div>
+          <div class="ar-row">
+            <div><label for="arGames">Số ván</label><input id="arGames" type="number" inputmode="numeric" min="1" max="200" value="10"></div>
+            <div><label for="arSpeed">Tốc độ xem</label>
+              <select id="arSpeed">
+                <option value="0">Nhanh nhất</option>
+                <option value="500">Vừa</option>
+                <option value="1000">Chậm</option>
+                <option value="1800">Rất chậm</option>
+              </select>
+            </div>
+            <label class="ar-check"><input id="arAlternate" type="checkbox" checked> Đổi màu mỗi ván</label>
+            <label class="ar-check"><input id="arOpenings" type="checkbox" checked> Khai cuộc ngẫu nhiên</label>
+          </div>
+          <p class="small-note">Elo Stockfish là thang <b>UCI_Elo</b> của chính engine (CCRL 40/4, chuẩn hoá ở 60s+0.6s), nằm trong 1320–3190 — <b>không</b> bằng Elo Chess.com/FIDE. Elo cao cần đủ thời gian nghĩ mới đạt đúng sức. Ô “Nghĩ/nước” để trống = tự động.</p>
+        </div>
+
+        <div class="ar-actions">
+          <button id="arStart" class="btn btn-primary" type="button">▶ Bắt đầu đấu</button>
+          <button id="arStop" class="btn btn-secondary" type="button" disabled>■ Dừng</button>
+          <button id="arPgnBtn" class="btn btn-outline" type="button" disabled>⤓ PGN</button>
+        </div>
+
+        <div id="arStage" class="ar-stage">
+          <div class="ar-player" id="arBarBlack">
+            <span class="ar-ptag">B</span>
+            <div class="ar-pmain"><strong class="ar-pname"></strong><small class="ar-pbadge"></small></div>
+            <span class="ar-pinfo"></span><span class="ar-dot"></span><span class="ar-col">♚</span>
+          </div>
+          <div class="ar-main">
+            <div class="ar-eval" aria-hidden="true"><div id="arEvalFill"></div></div>
+            <div id="arBoard" class="ar-board" role="img" aria-label="Bàn cờ Arena"></div>
+          </div>
+          <div class="ar-player" id="arBarWhite">
+            <span class="ar-ptag">A</span>
+            <div class="ar-pmain"><strong class="ar-pname"></strong><small class="ar-pbadge"></small></div>
+            <span class="ar-pinfo"></span><span class="ar-dot"></span><span class="ar-col">♔</span>
+          </div>
+
+          <div class="ar-score">
+            <div class="ar-sc-side"><small id="arNameA">A</small><b id="arPtsA">0</b></div>
+            <div class="ar-sc-mid"><span id="arGameNo">Sẵn sàng</span><small id="arWdl"></small></div>
+            <div class="ar-sc-side right"><small id="arNameB">B</small><b id="arPtsB">0</b></div>
+          </div>
+          <div class="ar-bar"><div id="arProgress"></div></div>
+          <div class="ar-status" id="arStatus" aria-live="polite">Chọn hai bên rồi bấm “Bắt đầu đấu”.</div>
+          <div class="ar-estimate" id="arEstimate"></div>
+          <div class="ar-moves" id="arMoves"></div>
+          <div class="ar-chips" id="arChips"></div>
+        </div>
+
+        <div class="ar-float">
+          <button id="arFloatStop" type="button" disabled>■ Dừng</button>
+          <button id="arFloatExit" type="button">✕ Thoát</button>
         </div>
       </div>
 
@@ -129,8 +196,10 @@
       <div id="tab-history" class="tab-content">
         <div class="panel-title"><span class="gold-symbol">⌁</span><h2>Lịch sử nước đi</h2></div>
         <div id="moveHistory" class="move-history"></div>
-        <button id="reviewBtn" class="btn btn-primary full-width"><span>✦</span> Phân tích ván bằng Nyra</button>
-        <div id="reviewResult" class="review-result"></div>
+        <button id="reviewBtnHistory" class="btn btn-primary full-width"><span>✦</span> Phân tích ván bằng Nyra</button>
+        <button id="boardReviewBtnHistory" class="btn btn-secondary full-width"><span>♟</span> Xem lại bàn cờ với nhãn</button>
+        <button id="downloadPgnBtnHistory" class="btn btn-secondary full-width"><span>⤓</span> Tải PGN</button>
+        <div id="reviewResultHistory" class="review-result"></div>
       </div>
     </section>
 
@@ -154,6 +223,21 @@
       </section>
     </aside>
   </main>
-  <script type="module" src="app.js?v=204"></script>
+  <div class="modal" id="pgnImportPanel" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="pgnImportTitle">
+      <button class="modal-close" id="pgnImportClose" type="button" aria-label="Đóng">✕</button>
+      <h3 id="pgnImportTitle">Nhập PGN</h3>
+      <p class="small-note">Dán PGN hoặc chọn file .pgn. Ván sẽ được đưa lên bàn cờ để tua lại, phân tích và chơi tiếp.</p>
+      <textarea id="pgnImportText" class="pgn-text pgn-import-text" placeholder="1. e4 e5 2. Nf3 Nc6 3. Bb5 ..."></textarea>
+      <input id="pgnImportFile" class="file-input" type="file" accept=".pgn,text/plain">
+      <div class="modal-actions">
+        <button id="pgnImportLoad" class="btn btn-primary" type="button">Tải vào bàn cờ</button>
+        <button id="pgnImportCancel" class="btn btn-secondary" type="button">Đóng</button>
+      </div>
+      <p class="small-note" id="pgnImportMsg"></p>
+    </div>
+  </div>
+
+  <script type="module" src="app.js?v=210"></script>
 </body>
-                                   </html>
+</html>

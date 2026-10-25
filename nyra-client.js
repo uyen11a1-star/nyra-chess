@@ -28,18 +28,18 @@ function getWorker() {
 
 export function hasLocalNyra() { return !!getWorker(); }
 
-export async function getNyraMove(fen, legalMoves, apiUrl) {
+export async function getNyraMove(fen, legalMoves, apiUrl, timeMs = NYRA_LOCAL_MS) {
   const w = getWorker();
   if (w) {
     try {
       const res = await new Promise((resolve, reject) => {
         const id = ++msgId;
-        const timer = setTimeout(() => { pending.delete(id); reject(new Error("Quá thời gian")); }, 20000);
+        const timer = setTimeout(() => { pending.delete(id); reject(new Error("Quá thời gian")); }, timeMs + 20000);
         pending.set(id, {
           resolve: (v) => { clearTimeout(timer); resolve(v); },
           reject: (e) => { clearTimeout(timer); reject(e); },
         });
-        w.postMessage({ id, fen, timeMs: NYRA_LOCAL_MS });
+        w.postMessage({ id, fen, timeMs });
       });
       res.source = "wasm";
       return res;
