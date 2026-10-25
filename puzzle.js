@@ -45,7 +45,7 @@ export function initPuzzle({ Chess, getNyraMove, getApiUrl, PIECES }) {
   async function loadIndex() {
     if (index || indexErr) return index;
     try {
-      const r = await fetch(DATA + "index.json?v=1");
+      const r = await fetch(DATA + "index.json", { cache: "no-cache" });
       if (!r.ok) throw new Error(r.status);
       index = await r.json();
     } catch (e) { indexErr = true; }

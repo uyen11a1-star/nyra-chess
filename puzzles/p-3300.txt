@@ -1,0 +1,3 @@
+WDc9D,r1r3k1/7p/2p3bP/2BpP1R1/1pn1p3/1N6/P7/2K4R b - - 2 34,a8a2 e5e6 c8c7 h1f1 a2a8 g5f5 g6f5 f1f5,3312,advantage middlegame quietMove sacrifice veryLong
+YZqZg,2r5/6k1/p2p2Pb/4pN2/2p1Q3/6R1/PP1q1r2/1K6 b - - 5 30,f2f5 e4b7 g7f8 g6g7 h6g7 b7c8 f8f7 c8d7 f7f6 d7g7 f6e6 g3g6 e6d5 g7b7 d5c5 b7c7,3319,advancedPawn crushing endgame exposedKing fork veryLong
+g7STS,4rr2/pb5R/3p2p1/1qpP1kN1/2p2PP1/2Q5/PP6/2K5 b - - 0 30,f5g4 g5e4 e8e4 c3h3 g4f4 h7h4 f4g5 h4e4,3323,crushing deflection middlegame sacrifice skewer veryLong
