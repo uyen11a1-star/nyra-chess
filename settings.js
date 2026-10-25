@@ -1,5 +1,5 @@
 // settings.js — bánh răng cài đặt: ngôn ngữ + tuỳ chỉnh puzzle. Lưu trong localStorage.
-import { t, getLang, setLang } from "./i18n.js?v=1";
+import { t, getLang, setLang } from "./i18n.js?v=3";
 
 const KEY = "nyraSettings";
 const DEFAULTS = { autoNext: true, autoQueen: false, showRating: true, showThemes: false, nyraMs: 1500 };

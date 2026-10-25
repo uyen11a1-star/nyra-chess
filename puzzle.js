@@ -2,8 +2,8 @@
 // Dữ liệu: puzzles/index.json + các file p-XXXX.txt (mỗi dòng: id,fen,moves,rating,themes) — nguồn Lichess (CC0).
 // Quy tắc Lichess: FEN là thế cờ TRƯỚC khi đối thủ đi; nước đầu trong `moves` là của đối thủ;
 // các nước còn lại xen kẽ người giải / đối thủ; nước nào chiếu hết cũng được tính là đúng.
-import { t, themeName, GENIUS_THEMES, getLang } from "./i18n.js?v=1";
-import { getSettings, onSettingsChange } from "./settings.js?v=1";
+import { t, themeName, GENIUS_THEMES, getLang } from "./i18n.js?v=3";
+import { getSettings, onSettingsChange } from "./settings.js?v=3";
 
 const PROG_KEY = "nyraPuzzleProgress", VS_KEY = "nyraPuzzleVs", UI_KEY = "nyraPuzzleUi";
 const DATA = "puzzles/";
@@ -28,7 +28,10 @@ export function initPuzzle({ Chess, getNyraMove, getApiUrl, PIECES }) {
   const saveJson = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* bỏ qua */ } };
   let prog = loadJson(PROG_KEY, { rating: 1200, solved: 0, streak: 0, seen: [] });
   let vs = loadJson(VS_KEY, { you: 0, nyra: 0 });
-  let ui = loadJson(UI_KEY, { mode: "practice", diff: "auto", theme: "all", count: 10 });
+  let ui = loadJson(UI_KEY, { mode: "practice", diff: "auto", theme: "all", count: 10, limit: "", speed: "normal" });
+  if (!/^[nt]\d+$/.test(ui.limit || "")) ui.limit = "n" + (ui.count || 10);
+  const BEST_KEY = "nyraPuzzleBest";
+  let best = loadJson(BEST_KEY, {});
   if (!["practice", "versus", "nyra"].includes(ui.mode)) ui.mode = "practice";
 
   // ------------------------------------------------------------ trạng thái
@@ -39,6 +42,7 @@ export function initPuzzle({ Chess, getNyraMove, getApiUrl, PIECES }) {
   let failed = false, hintUsed = false, finished = false, locked = true, startTs = 0;
   let loadToken = 0, vsPromise = null, vsResult = null;
   let running = false, runId = 0, session = null, ladder = 1000;
+  let runStart = 0, runEnd = 0, deadline = 0, clockTimer = null;
   let statusMsg = "", statusCls = "";
 
   // ------------------------------------------------------------ dữ liệu
@@ -202,11 +206,13 @@ export function initPuzzle({ Chess, getNyraMove, getApiUrl, PIECES }) {
     if (ui.mode === "nyra") {
       el.innerHTML = running
         ? `<button id="pzStop" class="btn btn-secondary" type="button">${t("pz.btn.stop")}</button>`
-        : `<label class="pz-count">${t("pz.nyra.count")}<select id="pzCount">${[5, 10, 25, 50, 100].map((n) => `<option value="${n}" ${n === ui.count ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+        : `<label class="pz-count">${t("pz.nyra.limit")}<select id="pzLimit">${limitOptions().map(([k, v]) => `<option value="${k}" ${k === ui.limit ? "selected" : ""}>${v}</option>`).join("")}</select></label>
+           <label class="pz-count">${t("pz.nyra.speed")}<select id="pzSpeed"><option value="normal" ${ui.speed !== "fast" ? "selected" : ""}>${t("pz.nyra.speed.normal")}</option><option value="fast" ${ui.speed === "fast" ? "selected" : ""}>${t("pz.nyra.speed.fast")}</option></select></label>
            <button id="pzStart" class="btn btn-primary" type="button">${t("pz.btn.start")}</button>`;
       if ($("pzStop")) $("pzStop").onclick = stopRun;
       if ($("pzStart")) $("pzStart").onclick = startRun;
-      if ($("pzCount")) $("pzCount").onchange = (e) => { ui.count = +e.target.value; saveJson(UI_KEY, ui); };
+      if ($("pzSpeed")) $("pzSpeed").onchange = (e) => { ui.speed = e.target.value; saveJson(UI_KEY, ui); };
+      if ($("pzLimit")) $("pzLimit").onchange = (e) => { ui.limit = e.target.value; saveJson(UI_KEY, ui); renderExtra(); };
       return;
     }
     el.innerHTML = finished
@@ -223,6 +229,35 @@ export function initPuzzle({ Chess, getNyraMove, getApiUrl, PIECES }) {
     if ($("pzFlip")) $("pzFlip").onclick = () => { flipped = !flipped; renderBoard(); };
   }
 
+  const pace = (ms) => (ui.speed === "fast" ? Math.round(ms / 10) : ms);
+  const limitOptions = () => [5, 10, 25, 50, 100].map((n) => ["n" + n, t("pz.nyra.byCount", { n })])
+    .concat([1, 3, 5].map((m) => ["t" + m * 60, t("pz.nyra.byTime", { m })]));
+  const isTimed = () => ui.limit[0] === "t";
+  const limitAmount = () => +ui.limit.slice(1);
+  const fmtClock = (ms) => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`; };
+  function clockText() {
+    if (isTimed()) {
+      if (running) return fmtClock(deadline - performance.now());
+      return runEnd ? fmtClock(0) : fmtClock(limitAmount() * 1000);
+    }
+    if (running) return fmtClock(performance.now() - runStart);
+    return runEnd ? fmtClock(runEnd - runStart) : "00:00";
+  }
+  function tickClock(my) {
+    const el = $("pzClock"); if (el) el.textContent = clockText();
+    if (running && my === runId && isTimed() && performance.now() >= deadline) expire(my);
+  }
+  function expire(my) {
+    running = false; runId++; runEnd = performance.now(); clearInterval(clockTimer);
+    const n = session ? session.ok : 0;
+    const isRecord = n > (best[ui.limit] || 0);
+    if (isRecord) { best[ui.limit] = n; saveJson(BEST_KEY, best); }
+    if (session) session.log.push({ ok: true, text: `⏱ ${t("pz.nyra.timeUp", { n })}${isRecord && n ? " — " + t("pz.nyra.newRecord") : ""}` });
+    finished = true; flash = null;
+    setStatus(t("pz.nyra.timeUp", { n }) + (isRecord && n ? " " + t("pz.nyra.newRecord") : ""), "ok");
+    renderBoard(); renderActions(); renderExtra();
+  }
+
   function renderExtra() {
     const el = $("pzExtra"); if (!el) return;
     if (ui.mode === "versus") {
@@ -233,9 +268,14 @@ export function initPuzzle({ Chess, getNyraMove, getApiUrl, PIECES }) {
     } else if (ui.mode === "nyra") {
       const s = session;
       const avg = s && s.times.length ? (s.times.reduce((a, b) => a + b, 0) / s.times.length / 1000).toFixed(1) : null;
+      const rec = isTimed() && best[ui.limit] ? `<div class="pz-record">🏆 ${t("pz.nyra.record", { n: best[ui.limit] })}</div>` : "";
       el.innerHTML = `
+        <div class="pz-clock-row">
+          <div><small>${isTimed() ? t("pz.nyra.timeLeft") : t("pz.nyra.elapsed")}</small><div class="pz-clock" id="pzClock">${clockText()}</div></div>
+          <div><small>${t("pz.nyra.solvedLabel")}</small><div class="pz-clock pz-ok">${s ? s.ok : 0}</div></div>
+        </div>${rec}
         <div class="pz-score"><div><small>${t("pz.nyra.score", { a: s ? s.ok : 0, b: s ? s.n : 0 })}</small><b>${s ? s.ok : 0}/${s ? s.n : 0}</b></div>
-          <span>${s && s.best ? t("pz.nyra.best", { r: s.best }) : ""}${avg ? `<br>${t("pz.nyra.avg", { s: avg })}` : ""}</span></div>
+          <span>${s && s.n ? t("pz.nyra.thinkTotal", { time: fmtClock(s.think) }) + "<br>" : ""}${s && s.best ? t("pz.nyra.best", { r: s.best }) : ""}${avg ? `<br>${t("pz.nyra.avg", { s: avg })}` : ""}</span></div>
         <div class="pz-log" id="pzLog">${s && s.log.length ? s.log.map((l) => `<div class="${l.ok ? "ok" : "bad"}">${l.text}</div>`).join("") : `<div class="pz-muted">${t("pz.nyra.idle")}</div>`}</div>`;
       const lg = $("pzLog"); if (lg) lg.scrollTop = lg.scrollHeight;
     } else el.innerHTML = "";
@@ -446,13 +486,14 @@ export function initPuzzle({ Chess, getNyraMove, getApiUrl, PIECES }) {
       const uci = String(d.uci || "").toLowerCase();
       const mv = applyUci(game, uci);
       if (!mv) return { ok: false, timeMs: think, ans, san: uci || "?" };
+      if (deadline && performance.now() >= deadline) return { stopped: true };
       lastMove = { from: mv.from, to: mv.to };
       const good = uci === p.moves[ptr] || game.isCheckmate();
       if (ptr === 1 && good && isGeniusPuzzle(p)) badgeSq = mv.to;
       setStatus(t("pz.nyra.chose", { san: mv.san }), good ? "ok" : "bad");
       flash = { sq: mv.to, cls: good ? "pz-right" : "pz-wrong" };
       renderBoard();
-      await sleep(900);
+      await sleep(pace(900));
       flash = null;
       if (!good) { renderBoard(); return { ok: false, timeMs: think, ans, san: mv.san }; }
       ptr++;
@@ -460,7 +501,7 @@ export function initPuzzle({ Chess, getNyraMove, getApiUrl, PIECES }) {
       const om = applyUci(game, p.moves[ptr]); ptr++;
       if (om) lastMove = { from: om.from, to: om.to };
       renderBoard();
-      await sleep(450);
+      await sleep(pace(450));
     }
     return { ok: true, timeMs: think };
   }
@@ -468,11 +509,15 @@ export function initPuzzle({ Chess, getNyraMove, getApiUrl, PIECES }) {
   async function startRun() {
     if (running) return;
     running = true; const my = ++runId; loadToken++;
-    ui.count = +($("pzCount")?.value || ui.count); saveJson(UI_KEY, ui);
-    session = { n: 0, ok: 0, times: [], best: 0, log: [] };
-    ladder = 1000;
+    const lim = $("pzLimit")?.value; if (lim) ui.limit = lim;
+    saveJson(UI_KEY, ui);
+    const timed = isTimed(), maxCount = timed ? Infinity : limitAmount();
+    session = { n: 0, ok: 0, times: [], best: 0, log: [], think: 0 };
+    const spd = $("pzSpeed")?.value; if (spd) ui.speed = spd; saveJson(UI_KEY, ui);
+    ladder = 1000; runStart = performance.now(); runEnd = 0; deadline = timed ? runStart + limitAmount() * 1000 : 0;
+    clearInterval(clockTimer); clockTimer = setInterval(() => tickClock(my), 200);
     renderActions(); renderExtra();
-    for (let i = 0; i < ui.count && running && my === runId; i++) {
+    for (let i = 0; i < maxCount && running && my === runId; i++) {
       const [lo, hi] = rangeFor();
       let p = null;
       try { p = await pick(lo, hi); } catch (e) { indexErr = true; }
@@ -481,13 +526,13 @@ export function initPuzzle({ Chess, getNyraMove, getApiUrl, PIECES }) {
       game = new Chess(p.fen); playerColor = game.turn() === "w" ? "b" : "w"; flipped = playerColor === "b";
       ptr = 1; sel = null; targets = []; lastMove = null; flash = null; hintSq = null; badgeSq = null; locked = true; finished = false;
       setStatus(t("pz.oppMoving")); renderAll();
-      await sleep(600);
+      await sleep(pace(600));
       const m = applyUci(game, p.moves[0]); if (m) lastMove = { from: m.from, to: m.to };
-      renderBoard(); await sleep(500);
+      renderBoard(); await sleep(pace(500));
       const r = await nyraPlayVisible(p, my);
       if (r.stopped || my !== runId) break;
       if (r.err) { setStatus(t("pz.vs.nyraErr", { msg: r.err }), "bad"); break; }
-      session.n++;
+      session.n++; session.think += r.timeMs || 0;
       const label = `#${i + 1} · ★${p.rating}`;
       if (r.ok) {
         session.ok++; session.times.push(r.timeMs); session.best = Math.max(session.best, p.rating);
@@ -499,13 +544,20 @@ export function initPuzzle({ Chess, getNyraMove, getApiUrl, PIECES }) {
         setStatus(t("pz.nyra.bad", { ans: r.ans }), "bad");
       }
       finished = true; renderBoard(); renderExtra();
-      await sleep(1400);
-      if (ui.diff === "ladder" && !r.ok) { session.log.push({ ok: false, text: t("pz.nyra.ladderEnd", { r: p.rating }) }); break; }
+      await sleep(pace(1400));
+      if (ui.diff === "ladder" && !r.ok) {
+        if (timed) ladder = Math.max(400, ladder - 100);
+        else { session.log.push({ ok: false, text: t("pz.nyra.ladderEnd", { r: p.rating }) }); break; }
+      }
     }
-    if (my === runId) { setStatus(t("pz.nyra.done"), "ok"); }
+    if (my === runId) {
+      runEnd = performance.now(); clearInterval(clockTimer);
+      setStatus(t("pz.nyra.doneIn", { n: session.n, ok: session.ok, time: fmtClock(runEnd - runStart), think: fmtClock(session.think) }), "ok");
+      session.log.push({ ok: true, text: "⏱ " + t("pz.nyra.doneIn", { n: session.n, ok: session.ok, time: fmtClock(runEnd - runStart), think: fmtClock(session.think) }) });
+    }
     running = false; renderActions(); renderExtra();
   }
-  function stopRun() { running = false; runId++; setStatus(t("pz.nyra.stopped")); renderActions(); }
+  function stopRun() { running = false; runId++; runEnd = performance.now(); clearInterval(clockTimer); setStatus(t("pz.nyra.stopped")); renderActions(); renderExtra(); }
 
   // ------------------------------------------------------------ chế độ
   function setMode(m) {
