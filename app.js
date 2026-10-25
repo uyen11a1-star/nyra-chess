@@ -3,6 +3,9 @@ import { getNyraMove, hasLocalNyra } from "./nyra-client.js?v=4";
 import { reviewGame, CLASS_INFO, CLASS_ORDER } from "./nyra-review.js?v=3";
 import { initArena } from "./arena.js?v=2";
 import { StockfishEngine, SF_LEVELS } from "./stockfish-client.js?v=2";
+import { initI18n } from "./i18n.js?v=1";
+import { initSettings } from "./settings.js?v=1";
+import { initPuzzle } from "./puzzle.js?v=1";
 
 const $ = (id) => document.getElementById(id);
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -1250,3 +1253,6 @@ if ($("opponentSelect")) {
   });
 }
 initArena({ Chess, getNyraMove, getApiUrl: () => $("endpointInput").value.trim() });
+const puzzleApi = initPuzzle({ Chess, getNyraMove, getApiUrl: () => $("endpointInput").value.trim(), PIECES });
+initSettings({ onResetPuzzle: () => puzzleApi && puzzleApi.resetProgress() });
+initI18n();

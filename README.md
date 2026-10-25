@@ -425,3 +425,10 @@ Build the server with `build.sh` and start the resulting binary:
 ## License
 
 This repository does not currently include a `LICENSE` file. All rights reserved by the author.
+
+## Puzzle & ngôn ngữ
+
+- **Tab Puzzle** (`puzzle.js`): 3 chế độ — *Luyện tập* (rating riêng, tự chọn puzzle gần rating của bạn), *Bạn đấu Nyra* (Nyra giải ngầm cùng puzzle, so tỉ số), *Nyra tự giải* (Nyra tự đi trên bàn; có chế độ "leo thang" +100 rating mỗi puzzle cho tới khi sai). Luật như Lichess: nước đầu là của đối thủ, nước chiếu hết nào cũng được tính đúng.
+- **Dữ liệu** (`puzzles/`): `index.json` + các file `p-XXXX.txt` (mỗi dòng `id,fen,moves,rating,themes`). Kèm sẵn bộ mẫu ~24.600 puzzle thật của Lichess (chưa có chủ đề). Chạy `tools/build_puzzles.py` để tạo bộ ~100.000 puzzle có chủ đề, trong đó có nhóm "nước đi thiên tài" (hy sinh, nước lặng, zugzwang, dọn đường, chặn đường, nước chen ngang). Nguồn: kho puzzle Lichess, giấy phép CC0.
+- **Bánh răng ⚙** (`settings.js`): ngôn ngữ Tiếng Việt / English, tự chuyển puzzle, phong cấp tự động thành Hậu, hiện rating/chủ đề, thời gian Nyra nghĩ mỗi nước, đặt lại tiến độ.
+- **Ngôn ngữ** (`i18n.js`): phần mới dùng từ điển `t()`; giao diện cũ được dịch lúc chạy bằng bảng tra VI→EN (chuỗi nào chưa có trong bảng thì giữ tiếng Việt).

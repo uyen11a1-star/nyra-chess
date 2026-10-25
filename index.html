@@ -9,7 +9,7 @@
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <meta name="mobile-web-app-capable" content="yes">
   <title>Nyra Chess 1.0</title>
-  <link rel="stylesheet" href="style.css?v=210">
+  <link rel="stylesheet" href="style.css?v=212">
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -20,11 +20,15 @@
       <span class="brand-mark">♞</span>
       <span><strong>NYRA</strong><small>CHESS LAB · C++</small></span>
     </a>
-    <div class="top-status"><span class="status-dot"></span><span id="connectionLabel">BÀN CỜ SẴN SÀNG</span></div>
+    <div class="top-right">
+      <div class="top-status"><span class="status-dot"></span><span id="connectionLabel">BÀN CỜ SẴN SÀNG</span></div>
+      <button class="gear-btn" id="settingsBtn" type="button" aria-label="Cài đặt" title="Cài đặt">⚙</button>
+    </div>
   </header>
 
   <nav class="navdrawer" id="navDrawer">
     <a class="navdrawer-item" data-drawer="play" href="#" id="drawerPlay"><span>♟</span> Chơi cờ</a>
+    <a class="navdrawer-item" data-drawer="puzzle" href="#" id="drawerPuzzle"><span>🧩</span> Puzzle</a>
     <a class="navdrawer-item" data-drawer="arena" href="#" id="drawerArena"><span>⚔️</span> Đấu trường AI</a>
     <a class="navdrawer-item" data-drawer="stats" href="#" id="drawerStats"><span>📊</span> Thống kê</a>
     <a class="navdrawer-item" data-drawer="history" href="#" id="drawerHistory"><span>⌁</span> Lịch sử &amp; Phân tích</a>
@@ -39,6 +43,7 @@
       <!-- TABS -->
       <div class="tabs">
         <button class="tab-btn active" data-tab="play">Chơi cờ</button>
+        <button class="tab-btn" data-tab="puzzle">Puzzle</button>
         <button class="tab-btn" data-tab="arena">Nyra Arena</button>
         <button class="tab-btn" data-tab="stats">Thống kê</button>
         <button class="tab-btn" data-tab="history">Lịch sử</button>
@@ -115,6 +120,9 @@
       </div>
 
       <!-- TAB: ARENA -->
+      <!-- TAB: PUZZLE -->
+      <div id="tab-puzzle" class="tab-content"></div>
+
       <div id="tab-arena" class="tab-content">
         <div class="ar-top">
           <div class="panel-title"><span class="gold-symbol">⚔️</span><h2>Nyra Arena</h2></div>
@@ -242,6 +250,6 @@
     </div>
   </div>
 
-  <script type="module" src="app.js?v=210"></script>
+  <script type="module" src="app.js?v=212"></script>
 </body>
 </html>
