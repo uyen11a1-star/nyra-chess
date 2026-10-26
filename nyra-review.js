@@ -133,7 +133,7 @@ export async function reviewGame(moves, { Chess, timeMs = 350, onProgress, analy
         bestSan = c.move({ from: cur.best.slice(0, 2), to: cur.best.slice(2, 4), promotion: cur.best[4] }).san;
       } catch (e) {}
       out.push({ ply: i, side, san: infos[i].san, uci: infos[i].uci, cls, loss, bestSan,
-                 acc: isBest ? 100 : moveAccuracy(loss), wpAfterWhite: evals[i + 1] });
+                 bestUci: cur.best || "", acc: isBest ? 100 : moveAccuracy(loss), wpAfterWhite: evals[i + 1] });
     }
 
     const summary = { w: { acc: 0, n: 0, counts: {} }, b: { acc: 0, n: 0, counts: {} } };

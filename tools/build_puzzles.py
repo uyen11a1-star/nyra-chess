@@ -3,14 +3,14 @@
 
 Cách dùng (Termux):
     pkg install -y python zstd
-    curl -L -o ~/lichess_puzzle.csv.zst https://database.lichess.org/lichess_puzzle.csv.zst
-    cd ~/nyra-chess && python3 tools/build_puzzles.py ~/lichess_puzzle.csv.zst
+    curl -L -o ~/lichess_db_puzzle.csv.zst https://database.lichess.org/lichess_puzzle.csv.zst
+    cd ~/nyra-chess && python3 tools/build_puzzles.py ~/lichess_db_puzzle.csv.zst
 
 Cũng nhận file .csv thường hoặc đọc từ stdin:  zstd -dc file.zst | python3 tools/build_puzzles.py -
 Kết quả: thư mục puzzles/ (index.json + p-XXXX.txt, mỗi file một dải 100 rating).
 Định dạng CSV Lichess: PuzzleId,FEN,Moves,Rating,RatingDeviation,Popularity,NbPlays,Themes,GameUrl,OpeningTags[,DailyDate]
 """
-import heapq, json, os, subprocess, sys, shutil, itertools
+import heapq, json, os, subprocess, sys, shutil, itertools, time
 
 TARGET = 100_000
 OUT = "puzzles"
@@ -121,7 +121,8 @@ def main():
             fh.write("\n".join(",".join([r[0], r[1], r[2], str(r[3]), r[4]]) for r in by[b]) + "\n")
         buckets.append({"min": b, "max": b + 99, "n": len(by[b]), "file": fn})
     counts = {t: sum(1 for r in rows if t in r[4].split(" ")) for t in GENIUS}
-    idx = {"version": 2, "source": "lichess", "themes": True, "total": len(rows), "genius": GENIUS, "geniusCounts": counts, "buckets": buckets}
+    idx = {"version": int(time.time()),   # đổi mỗi lần tạo lại để trình duyệt/service worker không giữ dữ liệu cũ
+            "source": "lichess", "themes": True, "total": len(rows), "genius": GENIUS, "geniusCounts": counts, "buckets": buckets}
     with open(os.path.join(tmp, "index.json"), "w", encoding="utf-8") as fh:
         json.dump(idx, fh, separators=(",", ":"))
     shutil.rmtree(OUT, ignore_errors=True)

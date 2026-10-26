@@ -2,8 +2,10 @@
 // Dữ liệu: puzzles/index.json + các file p-XXXX.txt (mỗi dòng: id,fen,moves,rating,themes) — nguồn Lichess (CC0).
 // Quy tắc Lichess: FEN là thế cờ TRƯỚC khi đối thủ đi; nước đầu trong `moves` là của đối thủ;
 // các nước còn lại xen kẽ người giải / đối thủ; nước nào chiếu hết cũng được tính là đúng.
-import { t, themeName, GENIUS_THEMES, getLang } from "./i18n.js?v=3";
-import { getSettings, onSettingsChange } from "./settings.js?v=3";
+import { t, themeName, GENIUS_THEMES, getLang } from "./i18n.js?v=4";
+import { getSettings, onSettingsChange } from "./settings.js?v=4";
+import { sfx } from "./sound.js?v=3";
+import { slideMove, confetti, countUp } from "./fx.js?v=1";
 
 const PROG_KEY = "nyraPuzzleProgress", VS_KEY = "nyraPuzzleVs", UI_KEY = "nyraPuzzleUi";
 const DATA = "puzzles/";
@@ -32,7 +34,7 @@ export function initPuzzle({ Chess, getNyraMove, getApiUrl, PIECES }) {
   if (!/^[nt]\d+$/.test(ui.limit || "")) ui.limit = "n" + (ui.count || 10);
   const BEST_KEY = "nyraPuzzleBest";
   let best = loadJson(BEST_KEY, {});
-  if (!["practice", "versus", "nyra"].includes(ui.mode)) ui.mode = "practice";
+  if (!["practice", "daily", "versus", "nyra"].includes(ui.mode)) ui.mode = "practice";
 
   // ------------------------------------------------------------ trạng thái
   let index = null, indexErr = false;
@@ -44,6 +46,41 @@ export function initPuzzle({ Chess, getNyraMove, getApiUrl, PIECES }) {
   let running = false, runId = 0, session = null, ladder = 1000;
   let runStart = 0, runEnd = 0, deadline = 0, clockTimer = null;
   let statusMsg = "", statusCls = "";
+  let animNext = null, dailyTimer = null, shownDay = "";
+
+  // ------------------------------------------------------------ puzzle hằng ngày (giữ chuỗi)
+  const DAILY_KEY = "nyraDaily";
+  // độ khó theo thứ trong tuần (CN, T2 … T7): đầu tuần dễ, cuối tuần khó
+  const DAILY_RANGES = [[1900, 2300], [700, 1000], [900, 1200], [1100, 1400], [1300, 1600], [1500, 1800], [1700, 2100]];
+  const DAILY_SHOWY = ["sacrifice", "quietMove", "mateIn2", "mateIn3", "fork", "discoveredAttack", "deflection", "attraction", "skewer",
+    "clearance", "interference", "intermezzo", "zugzwang", "doubleCheck", "smotheredMate", "backRankMate"];
+  const WEEK = { vi: ["CN", "T2", "T3", "T4", "T5", "T6", "T7"], en: ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] };
+  let daily = loadJson(DAILY_KEY, { streak: 0, best: 0, last: "", days: {} });
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const keyOf = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  const parseKey = (k) => { const [y, m, d] = k.split("-").map(Number); return new Date(y, m - 1, d); };
+  const todayKey = () => keyOf(new Date());
+  const shiftKey = (k, n) => { const d = parseKey(k); d.setDate(d.getDate() + n); return keyOf(d); };
+  const curStreak = () => (daily.last === todayKey() || daily.last === shiftKey(todayKey(), -1) ? daily.streak : 0);
+  const solvedToday = () => !!daily.days[todayKey()];
+  function fnv(str) { let h = 0x811c9dc5; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h >>> 0; }
+  function creditDaily() {
+    const k = todayKey();
+    if (daily.days[k]) return { streak: curStreak(), isNew: false };
+    daily.streak = daily.last === shiftKey(k, -1) ? daily.streak + 1 : 1;
+    daily.best = Math.max(daily.best, daily.streak);
+    daily.last = k; daily.days[k] = 1;
+    const keep = Object.keys(daily.days).sort().slice(-60), nd = {};
+    keep.forEach((x) => { nd[x] = 1; });
+    daily.days = nd;
+    saveJson(DAILY_KEY, daily);
+    return { streak: daily.streak, isNew: true, milestone: [3, 7, 14, 30, 50, 100, 200, 365].includes(daily.streak) };
+  }
+  const setLast = (m, silent) => {
+    if (!m) return;
+    lastMove = { from: m.from, to: m.to }; animNext = { from: m.from, to: m.to, t: performance.now() };
+    if (!silent) sfx.move(m);
+  };
 
   // ------------------------------------------------------------ dữ liệu
   async function loadIndex() {
@@ -123,9 +160,10 @@ export function initPuzzle({ Chess, getNyraMove, getApiUrl, PIECES }) {
           <div class="pz-stat"><small>${t("pz.solved")}</small><b id="pzSolved">${prog.solved}</b></div>
         </div>
         <div class="pz-seg" id="pzModes">
-          ${["practice", "versus", "nyra"].map((m) => `<button type="button" data-m="${m}" class="${ui.mode === m ? "active" : ""}">${t("pz.mode." + m)}</button>`).join("")}
+          ${["practice", "daily", "versus", "nyra"].map((m) => `<button type="button" data-m="${m}" class="${ui.mode === m ? "active" : ""}">${t("pz.mode." + m)}</button>`).join("")}
         </div>
-        <div class="pz-filters">
+        <div id="pzDaily"></div>
+        <div class="pz-filters" ${ui.mode === "daily" ? "hidden" : ""}>
           <label>${t("pz.diff")}<select id="pzDiff">${opt(diffOpts, ui.diff)}</select></label>
           <label>${t("pz.theme")}<select id="pzTheme" ${hasThemes ? "" : "disabled"}>${hasThemes ? opt(themeOpts, ui.theme) : `<option>${t("pz.theme.none")}</option>`}</select></label>
         </div>
@@ -147,7 +185,69 @@ export function initPuzzle({ Chess, getNyraMove, getApiUrl, PIECES }) {
     renderAll();
   }
 
-  function renderAll() { renderBoard(); renderInfo(); renderStatus(); renderActions(); renderExtra(); renderStats(); renderSource(); }
+  async function pickDaily() {
+    await loadIndex();
+    if (!index) return null;
+    const key = todayKey(), [lo, hi] = DAILY_RANGES[new Date().getDay()];
+    for (const widen of [0, 200, 500]) {
+      const bs = index.buckets.filter((b) => b.max >= lo - widen && b.min <= hi + widen);
+      let pool = [];
+      for (const b of bs) pool = pool.concat((await loadShard(b)).filter((p) => p.rating >= lo - widen && p.rating <= hi + widen));
+      if (!pool.length) continue;
+      if (index.themes) { const fancy = pool.filter((p) => p.themes.some((x) => DAILY_SHOWY.includes(x))); if (fancy.length > 50) pool = fancy; }
+      pool.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));       // thứ tự cố định → mọi người cùng ngày thấy cùng puzzle
+      return pool[fnv(key) % pool.length];
+    }
+    return null;
+  }
+  function dailyLeftText() {
+    const now = new Date(), end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    const s = Math.max(0, Math.floor((end - now) / 1000));
+    return `${pad2(Math.floor(s / 3600))}:${pad2(Math.floor((s % 3600) / 60))}:${pad2(s % 60)}`;
+  }
+  function renderDaily() {
+    const el = $("pzDaily"); if (!el) return;
+    if (ui.mode !== "daily") { el.innerHTML = ""; if (dailyTimer) { clearInterval(dailyTimer); dailyTimer = null; } return; }
+    const k = todayKey(), st = curStreak(), done = solvedToday();
+    shownDay = k;
+    const wk = WEEK[getLang() === "en" ? "en" : "vi"];
+    let strip = "";
+    for (let i = 6; i >= 0; i--) {
+      const dk = shiftKey(k, -i), cls = dk === k ? (done ? "done today" : "today") : daily.days[dk] ? "done" : "miss";
+      strip += `<div class="pz-day ${cls}" style="--i:${6 - i}"><span>${daily.days[dk] ? "🔥" : ""}</span><small>${wk[parseKey(dk).getDay()]}</small></div>`;
+    }
+    el.innerHTML = `<div class="pz-daily ${done ? "is-done" : ""}" id="pzDailyCard">
+      <div class="pz-dtop">
+        <div class="pz-dflame"><span class="pz-flame ${st ? "" : "cold"}">🔥</span><b id="pzDStreak">${st}</b></div>
+        <div class="pz-dtext">
+          <div class="pz-dtitle">${t("pz.daily.streakDays", { n: st })}</div>
+          <div class="pz-dsub ${done ? "ok" : ""}" id="pzDLeft">${done ? t("pz.daily.kept") : t("pz.daily.left", { time: dailyLeftText() })}</div>
+          <div class="pz-dsub">${t("pz.daily.best", { n: daily.best })}</div>
+        </div>
+      </div>
+      <div class="pz-week">${strip}</div></div>`;
+    if (!dailyTimer) dailyTimer = setInterval(tickDaily, 1000);
+  }
+  function tickDaily() {
+    if (ui.mode !== "daily") { clearInterval(dailyTimer); dailyTimer = null; return; }
+    if (todayKey() !== shownDay) { renderDaily(); if (!running) newPuzzle(); return; }          // qua nửa đêm: sang puzzle mới
+    const el = $("pzDLeft"); if (el && !solvedToday()) el.textContent = t("pz.daily.left", { time: dailyLeftText() });
+  }
+  // ăn mừng khi giải puzzle hằng ngày: số chuỗi đếm lên, ngọn lửa bật, pháo giấy, kèn chuông
+  function celebrate(prev, now, milestone, isNew) {
+    const wrap = root.querySelector(".pz-board-wrap");
+    wrap && wrap.classList.add("solved");
+    setTimeout(() => wrap && wrap.classList.remove("solved"), 2400);
+    if (!isNew) { sfx.pz("solved"); confetti(wrap, { count: 45 }); return; }
+    sfx.pz("streak", now);
+    confetti(wrap, { count: milestone ? 190 : 110 });
+    countUp($("pzDStreak"), prev, now, 900);
+    const card = $("pzDailyCard"), num = $("pzDStreak");
+    if (card) { card.classList.add("celebrate"); setTimeout(() => card.classList.remove("celebrate"), 2300); }
+    if (num) { num.classList.add("pop"); setTimeout(() => num.classList.remove("pop"), 1000); }
+  }
+
+  function renderAll() { renderBoard(); renderDaily(); renderInfo(); renderStatus(); renderActions(); renderExtra(); renderStats(); renderSource(); }
 
   function renderStats() {
     if (!$("pzRating")) return;
@@ -199,6 +299,7 @@ export function initPuzzle({ Chess, getNyraMove, getApiUrl, PIECES }) {
     }
     $("pzRanks").innerHTML = [...ranks].map((v) => `<span>${v}</span>`).join("");
     $("pzFiles").innerHTML = [...files].map((v) => `<span>${v}</span>`).join("");
+    if (animNext) { if (performance.now() - animNext.t < 250) slideMove(boardEl, animNext.from, animNext.to); else animNext = null; }
   }
 
   function renderActions() {
@@ -216,11 +317,11 @@ export function initPuzzle({ Chess, getNyraMove, getApiUrl, PIECES }) {
       return;
     }
     el.innerHTML = finished
-      ? `<button id="pzNext" class="btn btn-primary" type="button">${t("pz.btn.next")}</button>
+      ? `<button id="pzNext" class="btn btn-primary" type="button">${ui.mode === "daily" ? t("pz.btn.again") : t("pz.btn.next")}</button>
          <button id="pzFlip" class="btn btn-secondary" type="button">${t("pz.btn.flip")}</button>`
       : `<button id="pzHint" class="btn btn-secondary" type="button" ${locked || !pz ? "disabled" : ""}>${t("pz.btn.hint")}</button>
          <button id="pzSol" class="btn btn-secondary" type="button" ${locked || !pz ? "disabled" : ""}>${t("pz.btn.solution")}</button>
-         <button id="pzSkip" class="btn btn-secondary" type="button">${t("pz.btn.skip")}</button>
+         ${ui.mode === "daily" ? "" : `<button id="pzSkip" class="btn btn-secondary" type="button">${t("pz.btn.skip")}</button>`}
          <button id="pzFlip" class="btn btn-secondary" type="button">${t("pz.btn.flip")}</button>`;
     if ($("pzNext")) $("pzNext").onclick = newPuzzle;
     if ($("pzHint")) $("pzHint").onclick = showHint;
@@ -305,7 +406,7 @@ export function initPuzzle({ Chess, getNyraMove, getApiUrl, PIECES }) {
     await sleep(500);
     if (token !== loadToken) return false;
     const m = applyUci(game, p.moves[0]);
-    if (m) lastMove = { from: m.from, to: m.to };
+    setLast(m);
     return true;
   }
 
@@ -315,7 +416,7 @@ export function initPuzzle({ Chess, getNyraMove, getApiUrl, PIECES }) {
     setStatus(t("pz.loading")); renderAll();
     const [lo, hi] = rangeFor();
     let p = null;
-    try { p = await pick(lo, hi); } catch (e) { indexErr = true; }
+    try { p = ui.mode === "daily" ? await pickDaily() : await pick(lo, hi); } catch (e) { indexErr = true; }
     if (token !== loadToken) return;
     if (!p) { setStatus(indexErr ? t("pz.noData") : t("pz.noMatch"), "bad"); renderAll(); return; }
     if (!(await openPuzzle(p, token))) return;
@@ -359,8 +460,9 @@ export function initPuzzle({ Chess, getNyraMove, getApiUrl, PIECES }) {
     try { mv = game.move({ from, to, promotion: promo }); } catch (e) { mv = null; }
     if (!mv) { renderBoard(); return; }
     const ok = uci === pz.moves[ptr] || game.isCheckmate();
-    lastMove = { from: mv.from, to: mv.to };
+    setLast(mv, !ok);
     if (!ok) {
+      sfx.pz("bad");
       locked = true; failed = true; flash = { sq: to, cls: "pz-wrong" };
       if (prog.streak) { prog.streak = 0; saveJson(PROG_KEY, prog); renderStats(); }
       setStatus(t("pz.wrong"), "bad"); renderBoard();
@@ -371,6 +473,7 @@ export function initPuzzle({ Chess, getNyraMove, getApiUrl, PIECES }) {
     }
     if (ptr === 1 && isGeniusPuzzle(pz)) badgeSq = mv.to;
     ptr++;
+    if (!(ptr >= pz.moves.length || game.isCheckmate())) setTimeout(() => sfx.pz("ok"), 140);
     renderBoard();
     if (ptr >= pz.moves.length || game.isCheckmate()) { finishSolved(); return; }
     locked = true; setStatus(t("pz.keepGoing"), "ok");
@@ -378,7 +481,7 @@ export function initPuzzle({ Chess, getNyraMove, getApiUrl, PIECES }) {
     const token = loadToken;
     const om = applyUci(game, pz.moves[ptr]); ptr++;
     if (token !== loadToken) return;
-    if (om) lastMove = { from: om.from, to: om.to };
+    setLast(om);
     locked = false; renderBoard();
     if (ptr >= pz.moves.length) { finishSolved(); return; }
     setStatus("");
@@ -388,10 +491,19 @@ export function initPuzzle({ Chess, getNyraMove, getApiUrl, PIECES }) {
     finished = true; locked = true; sel = null; targets = [];
     const secs = (performance.now() - startTs) / 1000;
     const score = failed ? 0 : hintUsed ? 0.5 : 1;
-    const d = applyRating(score);
     const gen = badgeSq ? ` ✦ ${t("pz.genius")}` : "";
+    if (ui.mode === "daily") {                       // puzzle hằng ngày: không đổi rating, chỉ tính chuỗi ngày
+      const prev = curStreak(), r = creditDaily();
+      setStatus((r.isNew ? t("pz.daily.solvedNew", { n: r.streak }) : t("pz.daily.solvedAgain")) + gen, "ok");
+      renderAll();
+      celebrate(prev, r.streak, r.milestone, r.isNew);
+      return;
+    }
+    const d = applyRating(score);
     setStatus(`${t("pz.solvedMsg")} ${t("pz.ratingDelta", { d: (d >= 0 ? "+" : "") + d })}${gen}`, "ok");
     renderAll();
+    sfx.pz("solved");
+    if (!failed) confetti(root.querySelector(".pz-board-wrap"), { count: 45 });
     if (ui.mode === "versus" && vsPromise) {
       const token = loadToken;
       const r = await vsPromise;
@@ -409,8 +521,8 @@ export function initPuzzle({ Chess, getNyraMove, getApiUrl, PIECES }) {
 
   async function finishFailed() {
     finished = true; locked = true; sel = null; targets = [];
-    const d = applyRating(0);
-    setStatus(`${t("pz.failedMsg")} ${t("pz.ratingDelta", { d })}`, "bad");
+    if (ui.mode === "daily") setStatus(t("pz.daily.retry"), "bad");
+    else { const d = applyRating(0); setStatus(`${t("pz.failedMsg")} ${t("pz.ratingDelta", { d })}`, "bad"); }
     renderAll();
     if (ui.mode === "versus" && vsPromise) {
       const token = loadToken;
@@ -436,7 +548,7 @@ export function initPuzzle({ Chess, getNyraMove, getApiUrl, PIECES }) {
     sel = null; targets = []; hintSq = null;
     while (ptr < pz.moves.length && token === loadToken) {
       const m = applyUci(game, pz.moves[ptr]); ptr++;
-      if (m) lastMove = { from: m.from, to: m.to };
+      setLast(m);
       renderBoard();
       await sleep(650);
     }
@@ -487,7 +599,7 @@ export function initPuzzle({ Chess, getNyraMove, getApiUrl, PIECES }) {
       const mv = applyUci(game, uci);
       if (!mv) return { ok: false, timeMs: think, ans, san: uci || "?" };
       if (deadline && performance.now() >= deadline) return { stopped: true };
-      lastMove = { from: mv.from, to: mv.to };
+      setLast(mv);
       const good = uci === p.moves[ptr] || game.isCheckmate();
       if (ptr === 1 && good && isGeniusPuzzle(p)) badgeSq = mv.to;
       setStatus(t("pz.nyra.chose", { san: mv.san }), good ? "ok" : "bad");
@@ -499,7 +611,7 @@ export function initPuzzle({ Chess, getNyraMove, getApiUrl, PIECES }) {
       ptr++;
       if (game.isCheckmate() || ptr >= p.moves.length) break;
       const om = applyUci(game, p.moves[ptr]); ptr++;
-      if (om) lastMove = { from: om.from, to: om.to };
+      setLast(om);
       renderBoard();
       await sleep(pace(450));
     }
@@ -527,7 +639,7 @@ export function initPuzzle({ Chess, getNyraMove, getApiUrl, PIECES }) {
       ptr = 1; sel = null; targets = []; lastMove = null; flash = null; hintSq = null; badgeSq = null; locked = true; finished = false;
       setStatus(t("pz.oppMoving")); renderAll();
       await sleep(pace(600));
-      const m = applyUci(game, p.moves[0]); if (m) lastMove = { from: m.from, to: m.to };
+      const m = applyUci(game, p.moves[0]); setLast(m);
       renderBoard(); await sleep(pace(500));
       const r = await nyraPlayVisible(p, my);
       if (r.stopped || my !== runId) break;
@@ -563,6 +675,7 @@ export function initPuzzle({ Chess, getNyraMove, getApiUrl, PIECES }) {
   function setMode(m) {
     if (m === ui.mode) return;
     running = false; runId++; loadToken++;
+    if (dailyTimer) { clearInterval(dailyTimer); dailyTimer = null; }
     ui.mode = m; saveJson(UI_KEY, ui);
     session = null; pz = null; game = null;
     buildUI();

@@ -1,11 +1,13 @@
-import { Chess } from "https://cdn.jsdelivr.net/npm/chess.js@1.4.0/+esm";
+import { Chess } from "./vendor/chess.js?v=1";
 import { getNyraMove, hasLocalNyra } from "./nyra-client.js?v=4";
 import { reviewGame, CLASS_INFO, CLASS_ORDER } from "./nyra-review.js?v=3";
 import { initArena } from "./arena.js?v=2";
 import { StockfishEngine, SF_LEVELS } from "./stockfish-client.js?v=2";
-import { initI18n } from "./i18n.js?v=3";
-import { initSettings } from "./settings.js?v=3";
-import { initPuzzle } from "./puzzle.js?v=4";
+import { initI18n } from "./i18n.js?v=4";
+import { initSettings } from "./settings.js?v=4";
+import { initPuzzle } from "./puzzle.js?v=5";
+import { sfx } from "./sound.js?v=3";
+import { slideMove } from "./fx.js?v=1";
 
 const $ = (id) => document.getElementById(id);
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -30,6 +32,7 @@ let legalTargets = [];
 let flipped = false;
 let thinking = false;
 let lastMove = null;
+let animMove = null;   // nước vừa đi, để trượt quân ở lần vẽ bàn kế tiếp
 let requestId = 0;
 
 let timeWhite = 600, timeBlack = 600, increment = 0;
@@ -326,6 +329,8 @@ function renderBoard() {
       boardEl.appendChild(btn);
     }
   }
+  // bàn cờ có thể được vẽ lại 2 lần liền nhau (sau nước đi rồi tới lúc máy suy nghĩ) → giữ hiệu ứng thêm ~250ms
+  if (animMove) { if (performance.now() - animMove.t < 250) { if (!browsing) slideMove(boardEl, animMove.from, animMove.to); } else animMove = null; }
   const rankLabels = document.querySelector(".rank-labels");
   const fileLabels = document.querySelector(".file-labels");
   if (rankLabels) rankLabels.innerHTML = [...ranks].map(v => `<span>${v}</span>`).join("");
@@ -376,6 +381,7 @@ function onSquareClick(square) {
       return;
     }
     lastMove = { from: move.from, to: move.to };
+    animMove = { from: move.from, to: move.to, t: performance.now() }; sfx.move(move);
     importedResult = null;
     if (!isPaused && !isUnlimited()) {
       if (chess.turn() === "w") timeBlack += increment; else timeWhite += increment;
@@ -449,6 +455,7 @@ async function requestNyraMove() {
       if (chess.turn() === "w") timeBlack += increment; else timeWhite += increment;
     }
     lastMove = { from: move.from, to: move.to };
+    animMove = { from: move.from, to: move.to, t: performance.now() }; sfx.move(move);
     importedResult = null;
     if (fallback) {
       setStatus(`Nước đi của ${oppName()} không hợp lệ`, `Đã đi ${move.san} thay thế để ván không bị kẹt.`);
@@ -493,6 +500,7 @@ function updateUI() {
     stopClock();
     isGameActive = false;
     if (!resultRecorded) {
+      sfx.end(chess.isCheckmate() ? (chess.turn() === "b" ? "win" : "lose") : "draw");
       recordResult(chess.isCheckmate() ? "checkmate" : "draw");
       updatePgnBox();
       runAutoReview();
@@ -1256,3 +1264,8 @@ initArena({ Chess, getNyraMove, getApiUrl: () => $("endpointInput").value.trim()
 const puzzleApi = initPuzzle({ Chess, getNyraMove, getApiUrl: () => $("endpointInput").value.trim(), PIECES });
 initSettings({ onResetPuzzle: () => puzzleApi && puzzleApi.resetProgress() });
 initI18n();
+// chạy offline: đăng ký service worker (bỏ qua nếu trình duyệt không hỗ trợ)
+if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+  const reg = () => navigator.serviceWorker.register("sw.js").catch(() => {});
+  if (document.readyState === "complete") reg(); else window.addEventListener("load", reg);
+}

@@ -432,3 +432,11 @@ This repository does not currently include a `LICENSE` file. All rights reserved
 - **Dữ liệu** (`puzzles/`): `index.json` + các file `p-XXXX.txt` (mỗi dòng `id,fen,moves,rating,themes`). Kèm sẵn bộ mẫu ~24.600 puzzle thật của Lichess (chưa có chủ đề). Chạy `tools/build_puzzles.py` để tạo bộ ~100.000 puzzle có chủ đề, trong đó có nhóm "nước đi thiên tài" (hy sinh, nước lặng, zugzwang, dọn đường, chặn đường, nước chen ngang). Nguồn: kho puzzle Lichess, giấy phép CC0.
 - **Bánh răng ⚙** (`settings.js`): ngôn ngữ Tiếng Việt / English, tự chuyển puzzle, phong cấp tự động thành Hậu, hiện rating/chủ đề, thời gian Nyra nghĩ mỗi nước, đặt lại tiến độ.
 - **Ngôn ngữ** (`i18n.js`): phần mới dùng từ điển `t()`; giao diện cũ được dịch lúc chạy bằng bảng tra VI→EN (chuỗi nào chưa có trong bảng thì giữ tiếng Việt).
+
+## Hằng ngày, âm thanh, offline
+
+- **Puzzle hằng ngày** (tab Puzzle → "Hàng ngày"): mỗi ngày một puzzle chung cho mọi người (chọn theo ngày của máy, đầu tuần dễ, cuối tuần khó), có thẻ chuỗi ngày 🔥, dải 7 ngày, đồng hồ đếm ngược tới nửa đêm, pháo giấy và số chuỗi đếm lên khi giải xong. Dữ liệu chuỗi lưu trong trình duyệt (`nyraDaily`).
+- **Âm thanh** (`sound.js`): tự tổng hợp bằng Web Audio, không dùng file âm thanh nào. Mỗi ô cờ có một nốt chuông riêng trên thang năm âm Rê trưởng; ăn quân, chiếu, nhập thành, phong cấp, đúng/sai/giải xong puzzle, thắng/thua/hòa đều có âm riêng. Bật/tắt, chỉnh âm lượng và "Nghe thử" trong ⚙.
+- **Hiệu ứng** (`fx.js`): quân cờ trượt khi đi, pháo giấy, số đếm lên. Tự tắt khi hệ điều hành bật "giảm chuyển động" hoặc tắt trong ⚙.
+- **Offline** (`sw.js`, `offline.js`): service worker lưu file lại để mở web không cần mạng; nút "Tải puzzle & engine để chơi offline" trong ⚙ lưu sẵn toàn bộ puzzle, Nyra và Stockfish (khoảng 14 MB). Khi đổi nội dung `nyra.wasm`/Stockfish mà không đổi tên file, đổi số `CACHE` trong `sw.js` để mọi người tải lại. `chess.js` được đặt sẵn trong `vendor/` (không phụ thuộc CDN).
+- `_headers`: cho Cloudflare Pages nhớ file Stockfish và `vendor/` lâu hơn.

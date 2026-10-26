@@ -403,3 +403,50 @@ body.ar-video .ar-float:hover, body.ar-video .ar-float:focus-within { opacity: 1
 .st-check { display: flex; align-items: center; justify-content: flex-start; gap: 12px; cursor: pointer; }
 .st-check input { width: 20px; height: 20px; flex: none; margin: 0; accent-color: #d7b66c; }
 .st-check span { flex: 1; line-height: 1.35; }
+
+/* đồng hồ chế độ Nyra */
+.pz-clock-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+.pz-clock-row > div { background: #0f100e; border: 1px solid #ffffff12; border-radius: 10px; padding: 8px 10px; text-align: center; }
+.pz-clock-row small { color: var(--muted); font-size: 10px; display: block; }
+.pz-clock { font: 700 30px 'DM Mono', monospace; color: var(--gold-bright); line-height: 1.2; }
+.pz-clock.pz-ok { color: #8fd16f; }
+.pz-record { text-align: center; font-size: 12px; color: var(--gold-bright); margin: -2px 0 8px; }
+
+/* ===== puzzle hằng ngày + hiệu ứng ===== */
+.pz-filters[hidden] { display: none; }
+.pz-seg button { font-size: 11.5px; padding: 8px 2px; white-space: nowrap; }
+.pz-daily { position: relative; overflow: hidden; background: linear-gradient(160deg, #1b1710, #0f100e 70%); border: 1px solid #d7b66c40;
+  border-radius: 14px; padding: 12px 14px; margin-bottom: 10px; }
+.pz-dtop { display: flex; align-items: center; gap: 14px; }
+.pz-dflame { display: flex; flex-direction: column; align-items: center; min-width: 58px; }
+.pz-flame { font-size: 34px; line-height: 1; display: inline-block; transform-origin: 50% 90%;
+  filter: drop-shadow(0 0 8px #ff8a3a99); animation: pzFlame 1.5s ease-in-out infinite; }
+.pz-flame.cold { filter: grayscale(1) opacity(.5); animation: none; }
+@keyframes pzFlame { 0%, 100% { transform: scale(1) rotate(-3deg); } 30% { transform: scale(1.1, 1.14) rotate(3deg); }
+  60% { transform: scale(.96, 1.05) rotate(-2deg); } }
+.pz-dflame b { font: 800 28px 'DM Mono', monospace; color: var(--gold-bright); line-height: 1.1; display: inline-block; }
+.pz-dflame b.pop { animation: pzPop .9s cubic-bezier(.2, 1.6, .4, 1); }
+@keyframes pzPop { 0% { transform: scale(1); } 35% { transform: scale(1.7); color: #fff6dd; text-shadow: 0 0 14px #ffb347; } 100% { transform: scale(1); } }
+.pz-dtitle { font-weight: 800; font-size: 15px; }
+.pz-dsub { font-size: 11.5px; color: var(--muted); margin-top: 2px; font-variant-numeric: tabular-nums; }
+.pz-dsub.ok { color: #8fd16f; }
+.pz-week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin-top: 12px; }
+.pz-day { text-align: center; opacity: 0; animation: pzDayIn .4s ease-out forwards; animation-delay: calc(var(--i) * 70ms); }
+@keyframes pzDayIn { from { opacity: 0; transform: translateY(8px) scale(.8); } to { opacity: 1; transform: none; } }
+.pz-day span { display: flex; align-items: center; justify-content: center; width: 100%; aspect-ratio: 1; max-width: 34px; margin: 0 auto;
+  border-radius: 50%; border: 1.5px dashed #ffffff26; font-size: 15px; }
+.pz-day small { display: block; margin-top: 3px; font-size: 9.5px; color: var(--muted); }
+.pz-day.done span { border: 1.5px solid #d7b66c; background: #d7b66c26; }
+.pz-day.today span { border: 2px solid var(--gold-bright); }
+.pz-day.today:not(.done) span { animation: pzRing 1.6s ease-in-out infinite; }
+@keyframes pzRing { 0%, 100% { box-shadow: 0 0 0 0 #f1d28b66; } 50% { box-shadow: 0 0 0 6px #f1d28b00; } }
+.pz-day.today small { color: var(--gold-bright); font-weight: 800; }
+.pz-daily.celebrate::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(105deg, transparent 35%, #fff6dd55 50%, transparent 65%); transform: translateX(-120%); animation: pzShine 1.3s ease-out .1s; }
+@keyframes pzShine { to { transform: translateX(120%); } }
+.pz-daily.is-done { border-color: #8fd16f55; }
+.pz-board-wrap.solved .pz-board { animation: pzGlow 2.2s ease-out; }
+@keyframes pzGlow { 0% { box-shadow: 0 0 0 0 #f1d28b00; } 25% { box-shadow: 0 0 0 3px #f1d28b, 0 0 32px 6px #f1d28b66; } 100% { box-shadow: 0 0 0 0 #f1d28b00; } }
+.fx-confetti { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 8; }
+@media (prefers-reduced-motion: reduce) { .pz-flame, .pz-day, .pz-dflame b.pop { animation: none !important; opacity: 1; } }
+#stVolume { accent-color: #d7b66c; flex: 1; min-width: 0; }
