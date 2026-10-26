@@ -2,9 +2,9 @@
 // Dữ liệu: puzzles/index.json + các file p-XXXX.txt (mỗi dòng: id,fen,moves,rating,themes) — nguồn Lichess (CC0).
 // Quy tắc Lichess: FEN là thế cờ TRƯỚC khi đối thủ đi; nước đầu trong `moves` là của đối thủ;
 // các nước còn lại xen kẽ người giải / đối thủ; nước nào chiếu hết cũng được tính là đúng.
-import { t, themeName, GENIUS_THEMES, getLang } from "./i18n.js?v=4";
-import { getSettings, onSettingsChange } from "./settings.js?v=4";
-import { sfx } from "./sound.js?v=3";
+import { t, themeName, GENIUS_THEMES, getLang } from "./i18n.js?v=5";
+import { getSettings, onSettingsChange } from "./settings.js?v=5";
+import { sfx } from "./sound.js?v=4";
 import { slideMove, confetti, countUp } from "./fx.js?v=1";
 
 const PROG_KEY = "nyraPuzzleProgress", VS_KEY = "nyraPuzzleVs", UI_KEY = "nyraPuzzleUi";

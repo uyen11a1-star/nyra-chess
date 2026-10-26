@@ -436,7 +436,8 @@ This repository does not currently include a `LICENSE` file. All rights reserved
 ## Hằng ngày, âm thanh, offline
 
 - **Puzzle hằng ngày** (tab Puzzle → "Hàng ngày"): mỗi ngày một puzzle chung cho mọi người (chọn theo ngày của máy, đầu tuần dễ, cuối tuần khó), có thẻ chuỗi ngày 🔥, dải 7 ngày, đồng hồ đếm ngược tới nửa đêm, pháo giấy và số chuỗi đếm lên khi giải xong. Dữ liệu chuỗi lưu trong trình duyệt (`nyraDaily`).
-- **Âm thanh** (`sound.js`): tự tổng hợp bằng Web Audio, không dùng file âm thanh nào. Mỗi ô cờ có một nốt chuông riêng trên thang năm âm Rê trưởng; ăn quân, chiếu, nhập thành, phong cấp, đúng/sai/giải xong puzzle, thắng/thua/hòa đều có âm riêng. Bật/tắt, chỉnh âm lượng và "Nghe thử" trong ⚙.
+- **Âm thanh** (`sound.js`): tự tổng hợp bằng Web Audio, không dùng file âm thanh nào. Mọi nước đi dùng một tiếng cố định: quân gỗ chạm xuống bàn cờ (3 kiểu chọn trong ⚙: Gỗ, Gỗ trầm, Nhẹ). Chuông báo thắng/thua và puzzle là phần phụ, mặc định tắt. Bật/tắt, âm lượng và "Nghe thử" trong ⚙.
+- **Giao diện bàn cờ** (⚙): 6 kiểu bàn cờ (Gỗ cổ điển, Xanh rêu, Xanh biển, Tím mộng, Hồng đào, Xám than), bật/tắt tọa độ và chấm gợi ý ô đi được. Màu bàn cờ nằm ở hai biến CSS `--board-light` / `--board-dark`; thêm kiểu mới ở `BOARD_THEMES` trong `settings.js`.
 - **Hiệu ứng** (`fx.js`): quân cờ trượt khi đi, pháo giấy, số đếm lên. Tự tắt khi hệ điều hành bật "giảm chuyển động" hoặc tắt trong ⚙.
 - **Offline** (`sw.js`, `offline.js`): service worker lưu file lại để mở web không cần mạng; nút "Tải puzzle & engine để chơi offline" trong ⚙ lưu sẵn toàn bộ puzzle, Nyra và Stockfish (khoảng 14 MB). Khi đổi nội dung `nyra.wasm`/Stockfish mà không đổi tên file, đổi số `CACHE` trong `sw.js` để mọi người tải lại. `chess.js` được đặt sẵn trong `vendor/` (không phụ thuộc CDN).
 - `_headers`: cho Cloudflare Pages nhớ file Stockfish và `vendor/` lâu hơn.

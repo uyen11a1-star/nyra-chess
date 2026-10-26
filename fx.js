@@ -1,6 +1,6 @@
 // fx.js — hiệu ứng chuyển động: quân cờ trượt, pháo giấy, số đếm lên. Tự tắt khi người dùng bật "giảm chuyển động"
 // của hệ điều hành hoặc tắt hiệu ứng trong ⚙.
-import { getSettings } from "./settings.js?v=4";
+import { getSettings } from "./settings.js?v=5";
 
 const reducedMotion = () => window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 export const animOn = () => getSettings().anim !== false && !reducedMotion();

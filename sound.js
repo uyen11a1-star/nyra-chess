@@ -1,14 +1,11 @@
-// sound.js — âm thanh riêng của Nyra Chess, tổng hợp hoàn toàn bằng Web Audio (không dùng file âm thanh nào).
+// sound.js — âm thanh của Nyra Chess, tổng hợp hoàn toàn bằng Web Audio (không dùng file âm thanh nào).
 //
-// Ý tưởng thiết kế ("chuông gỗ"): mỗi nước đi = tiếng "cộp" gỗ ngắn + một nốt chuông rất nhẹ.
-// Nốt chuông phụ thuộc ô đến (cột + hàng → thang năm âm Rê trưởng), nên khi chơi, các nước đi
-// tự ngân thành giai điệu nhẹ — đây là chữ ký âm thanh của web.
-//   • ăn quân     : cộp nặng + tiếng "xoạt" + hai nốt lệch nhau nửa cung (nghe "gắt")
-//   • chiếu       : hai nốt chuông bay lên
-//   • nhập thành  : hai tiếng cộp liền nhau (vua rồi xe)
-//   • phong cấp   : dải nốt đi lên lấp lánh
-//   • puzzle      : đúng = chuông quãng năm; sai = "bộp" trầm; giải xong = dải nốt đi lên; chuỗi ngày = kèn chuông dài theo chuỗi
-import { getSettings, onSettingsChange } from "./settings.js?v=4";
+// Mọi nước đi (thường, ăn quân, nhập thành, chiếu…) dùng MỘT tiếng cố định: tiếng quân cờ gỗ chạm xuống mặt bàn cờ.
+// Cách dựng ("tổng hợp theo mode"): một cú gõ rất ngắn kích thích vài tần số cộng hưởng của khối gỗ
+// (thân trầm ~200Hz, hai họa âm giữa, một chút "tách" ở dải cao), mỗi mode tắt dần với tốc độ riêng.
+// Có 3 kiểu tiếng để chọn trong ⚙: Gỗ, Gỗ trầm (quân nặng), Nhẹ (quân nhẹ/dạ).
+// Các âm báo thắng/thua và puzzle (chuông) là phần phụ, mặc định tắt.
+import { getSettings, onSettingsChange } from "./settings.js?v=5";
 
 const D4 = 293.66;                     // Rê4
 const PENT = [0, 2, 4, 7, 9];          // thang năm âm trưởng
@@ -16,7 +13,7 @@ const note = (deg, base = D4) => base * 2 ** ((PENT[((deg % 5) + 5) % 5] + 12 * 
 const semis = (f, n) => f * 2 ** (n / 12);
 
 const GAIN = 1.4;                      // hệ số âm lượng tổng (đã chỉnh theo kết quả đo đỉnh sóng)
-let ctx = null, master = null, enabled = true, volume = 0.7, noiseBuf = null;
+let ctx = null, master = null, enabled = true, volume = 0.7, noiseBuf = null, soundStyle = "wood", extras = false;
 
 function ensure() {
   if (ctx) return ctx;
@@ -79,32 +76,22 @@ function bell(c, dest, f, { t = 0, dur = 0.28, gain = 0.12 } = {}) {
 }
 
 // ---------------------------------------------------------------- các âm thanh (nhận ctx + đích để dùng được cả khi render offline)
+const KNOCK = {
+  //        [tần số đầu, tần số cuối, thời gian tắt (s), biên độ]
+  wood: { modes: [[230, 185, 0.090, 0.60], [560, 520, 0.055, 0.30], [1180, 1100, 0.034, 0.17], [2350, 2300, 0.020, 0.08]],
+          click: { f: 2600, q: 1.0, dur: 0.012, gain: 0.38 }, body: { f: 900, dur: 0.035, gain: 0.16 } },
+  deep: { modes: [[150, 112, 0.125, 0.66], [380, 340, 0.075, 0.30], [870, 820, 0.045, 0.14], [1750, 1700, 0.025, 0.06]],
+          click: { f: 2000, q: 0.9, dur: 0.010, gain: 0.26 }, body: { f: 600, dur: 0.050, gain: 0.20 } },
+  soft: { modes: [[300, 262, 0.065, 0.55], [760, 700, 0.040, 0.24], [1500, 1450, 0.025, 0.10]],
+          click: { f: 1800, q: 0.8, dur: 0.008, gain: 0.18 }, body: { f: 1100, dur: 0.025, gain: 0.12 } },
+};
 const SOUNDS = {
-  // tiếng cộp gỗ: va chạm + thân trầm
-  tok(c, d, { f = 880, gain = 1, t = 0 } = {}) {
-    noise(c, d, { t, dur: 0.035, gain: 0.34 * gain, f: 2100, q: 1.3 });
-    tone(c, d, { t, f: 190, to: 88, dur: 0.075, gain: 0.46 * gain, attack: 0.002 });
-    bell(c, d, f, { t, dur: 0.3, gain: 0.1 * gain });
-  },
-  capture(c, d, { f = 880 } = {}) {
-    noise(c, d, { dur: 0.07, gain: 0.34, type: "lowpass", f: 1500, q: 0.7 });
-    noise(c, d, { dur: 0.03, gain: 0.3, f: 2600, q: 1.5 });
-    tone(c, d, { f: 150, to: 52, dur: 0.12, gain: 0.58, attack: 0.002 });
-    bell(c, d, f * 0.75, { dur: 0.26, gain: 0.1 });
-    bell(c, d, f * 0.75 * 1.0595, { t: 0.012, dur: 0.2, gain: 0.07 });       // nửa cung lệch → "gắt"
-    SOUNDS.tok(c, d, { f: f * 0.5, gain: 0.5 });
-    },
-  check(c, d, { f = 880 } = {}) {
-    bell(c, d, f * 2, { t: 0.07, dur: 0.34, gain: 0.12 });
-    bell(c, d, f * 3, { t: 0.17, dur: 0.4, gain: 0.1 });
-  },
-  castle(c, d, { f = 880 } = {}) {
-    SOUNDS.tok(c, d, { f });
-    SOUNDS.tok(c, d, { f: f * 1.5, gain: 0.85, t: 0.11 });
-  },
-  promote(c, d, { f = 880 } = {}) {
-    for (let i = 0; i < 5; i++) bell(c, d, note(4 + i, D4), { t: 0.06 * i, dur: 0.3, gain: 0.1 });
-    tone(c, d, { f: f * 4, t: 0.3, dur: 0.35, gain: 0.05 });
+  // tiếng quân cờ chạm bàn cờ — luôn giống hệt nhau cho mọi nước đi
+  knock(c, d, { style = "wood", t = 0, gain = 1 } = {}) {
+    const k = KNOCK[style] || KNOCK.wood;
+    for (const [f, to, dur, g] of k.modes) tone(c, d, { f, to, t, dur, gain: g * gain, attack: 0.0012 });
+    noise(c, d, { t, dur: k.click.dur, gain: k.click.gain * gain, type: "bandpass", f: k.click.f, q: k.click.q });
+    noise(c, d, { t, dur: k.body.dur, gain: k.body.gain * gain, type: "lowpass", f: k.body.f, q: 0.7 });
   },
   // ---- puzzle
   pzOk(c, d) {                       // đúng nước: chuông quãng năm
@@ -140,11 +127,6 @@ const SOUNDS = {
   },
 };
 // ---------------------------------------------------------------- API
-function squareFreq(sq) {
-  if (!sq || sq.length < 2) return 880;
-  const file = sq.charCodeAt(0) - 97, rank = Number(sq[1]) - 1;
-  return note(3 + ((file * 3 + rank) % 8), D4);   // 8 nốt từ La4 tới Rê6: mỗi ô một nốt
-}
 function play(name, opts) {
   if (!enabled || volume <= 0 || document.hidden) return;
   const c = ensure();
@@ -154,25 +136,19 @@ function play(name, opts) {
 }
 
 export const sfx = {
-  // gọi từ mọi nơi có nước đi: mv là đối tượng nước đi của chess.js
-  move(mv) {
-    if (!mv) return;
-    const f = squareFreq(mv.to), san = mv.san || "";
-    if (mv.promotion) play("promote", { f });
-    else if (mv.flags && /[kq]/.test(mv.flags)) play("castle", { f });
-    else if (mv.captured || (mv.flags && /[ce]/.test(mv.flags))) play("capture", { f });
-    else play("tok", { f });
-    if (san.endsWith("+") || san.endsWith("#")) play("check", { f });
-  },
-  end(kind) { play(kind === "win" ? "win" : kind === "lose" ? "lose" : "draw"); },
+  // gọi từ mọi nơi có nước đi: mọi nước đều là cùng một tiếng chạm bàn cờ
+  move(mv) { if (mv) play("knock", { style: soundStyle }); },
+  // phần phụ (mặc định tắt trong ⚙): chuông thắng/thua và puzzle
+  end(kind) { if (extras) play(kind === "win" ? "win" : kind === "lose" ? "lose" : "draw"); },
   pz(kind, n) {
+    if (!extras) return;
     if (kind === "ok") play("pzOk");
     else if (kind === "bad") play("pzBad");
     else if (kind === "solved") play("pzSolved");
     else if (kind === "streak") play("pzStreak", { n });
   },
   unlock() { const c = ensure(); if (c && c.state === "suspended") c.resume(); },
-  // dùng cho kiểm thử/"nghe thử": dựng âm vào một OfflineAudioContext
+  // dùng cho kiểm thử: dựng âm vào một OfflineAudioContext
   _render(name, opts, seconds = 1.5, sr = 22050) {
     const oc = new OfflineAudioContext(1, Math.floor(seconds * sr), sr);
     const chain = makeChain(oc);
@@ -184,18 +160,15 @@ export const sfx = {
 
 function applySettings(cfg) {
   enabled = cfg.sound !== false;
+  soundStyle = KNOCK[cfg.soundStyle] ? cfg.soundStyle : "wood";
+  extras = !!cfg.soundExtras;
   volume = Math.min(1, Math.max(0, (cfg.volume ?? 70) / 100));
   if (master) master.gain.value = volume * volume * GAIN;
 }
 applySettings(getSettings());
 onSettingsChange(applySettings);
-// nút "Nghe thử" trong ⚙: nước đi thường → ăn quân → giải xong
+// nút "Nghe thử" trong ⚙: ba tiếng chạm bàn cờ liên tiếp
 window.addEventListener("nyra-sfx-test", () => {
   sfx.unlock();
-  const play1 = (mv, wait) => setTimeout(() => sfx.move(mv), wait);
-  play1({ to: "e4", san: "e4", flags: "b" }, 0);
-  play1({ to: "d5", san: "exd5", flags: "c", captured: "p" }, 450);
-  setTimeout(() => sfx.pz("solved"), 1000);
+  [0, 420, 840].forEach((w) => setTimeout(() => sfx.move({ to: "e4" }), w));
 });
-// trình duyệt chỉ cho phát âm sau khi người dùng chạm/bấm lần đầu
-["pointerdown", "touchstart", "keydown"].forEach((ev) => window.addEventListener(ev, () => sfx.unlock(), { once: true, passive: true }));

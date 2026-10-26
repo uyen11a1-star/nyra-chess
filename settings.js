@@ -1,17 +1,34 @@
 // settings.js — bánh răng cài đặt: ngôn ngữ + tuỳ chỉnh puzzle. Lưu trong localStorage.
-import { t, getLang, setLang } from "./i18n.js?v=4";
+import { t, getLang, setLang } from "./i18n.js?v=5";
 import { warmOffline, offlineStatus, offlineSupported } from "./offline.js?v=1";
 
 const KEY = "nyraSettings";
-const DEFAULTS = { autoNext: true, autoQueen: false, showRating: true, showThemes: false, nyraMs: 1500, sound: true, volume: 70, anim: true };
+const DEFAULTS = { autoNext: true, autoQueen: false, showRating: true, showThemes: false, nyraMs: 1500, sound: true, volume: 70, anim: true,
+  soundStyle: "wood", soundExtras: false, boardTheme: "wood", coords: true, hints: true };
 let cfg = { ...DEFAULTS };
 try { Object.assign(cfg, JSON.parse(localStorage.getItem(KEY) || "{}")); } catch (e) { /* bỏ qua */ }
 const subs = new Set();
 
 export const getSettings = () => cfg;
+
+// Các kiểu bàn cờ: l = màu ô sáng, d = màu ô tối (mọi bàn cờ trong web đều dùng 2 biến CSS này)
+export const BOARD_THEMES = [
+  { id: "wood", l: "#e3d6b8", d: "#78664b" }, { id: "green", l: "#d9e2c0", d: "#6a8f61" }, { id: "ocean", l: "#cfdde8", d: "#5f84a6" },
+  { id: "violet", l: "#d6cbe8", d: "#7560a3" }, { id: "rose", l: "#ecd3d1", d: "#b9808c" }, { id: "slate", l: "#cfd2d9", d: "#667082" },
+];
+function applyAppearance() {
+  const th = BOARD_THEMES.find((b) => b.id === cfg.boardTheme) || BOARD_THEMES[0];
+  const r = document.documentElement;
+  r.style.setProperty("--board-light", th.l);
+  r.style.setProperty("--board-dark", th.d);
+  r.dataset.coords = cfg.coords === false ? "off" : "on";
+  r.dataset.hints = cfg.hints === false ? "off" : "on";
+}
+applyAppearance();
 export const onSettingsChange = (fn) => subs.add(fn);
 function save() {
   try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch (e) { /* bỏ qua */ }
+  applyAppearance();
   subs.forEach((f) => f(cfg));
 }
 
@@ -45,8 +62,17 @@ export function initSettings({ onResetPuzzle } = {}) {
           </div>
         </div>
         <div class="st-group">
+          <div class="st-label">${t("settings.group.look")}</div>
+          <div class="bt-grid">${BOARD_THEMES.map((b) => `<button type="button" class="bt ${cfg.boardTheme === b.id ? "active" : ""}" data-bt="${b.id}" style="--l:${b.l};--d:${b.d}"><span class="bt-board"><i></i><i></i><i></i><i></i></span><small>${t("board." + b.id)}</small></button>`).join("")}</div>
+          ${check("stCoords", t("settings.coords"), cfg.coords)}
+          ${check("stHints", t("settings.hints"), cfg.hints)}
+        </div>
+        <div class="st-group">
           <div class="st-label">${t("settings.group.sound")}</div>
           ${check("stSound", t("settings.sound"), cfg.sound)}
+          <label class="st-row st-select">${t("settings.soundStyle")}
+            <select id="stSoundStyle">${["wood", "deep", "soft"].map((k) => `<option value="${k}" ${cfg.soundStyle === k ? "selected" : ""}>${t("sound." + k)}</option>`).join("")}</select></label>
+          ${check("stSoundExtras", t("settings.soundExtras"), cfg.soundExtras)}
           <label class="st-row st-select">${t("settings.volume")}
             <input id="stVolume" type="range" min="0" max="100" step="5" value="${cfg.volume}"></label>
           ${check("stAnim", t("settings.anim"), cfg.anim)}
@@ -78,7 +104,14 @@ export function initSettings({ onResetPuzzle } = {}) {
     bind("stAutoNext", "autoNext"); bind("stAutoQueen", "autoQueen");
     bind("stShowRating", "showRating"); bind("stShowThemes", "showThemes");
     $("stNyraMs").onchange = (e) => { cfg.nyraMs = Number(e.target.value); save(); };
-    bind("stSound", "sound"); bind("stAnim", "anim");
+    bind("stSound", "sound"); bind("stAnim", "anim"); bind("stCoords", "coords"); bind("stHints", "hints"); bind("stSoundExtras", "soundExtras");
+    $("stSoundStyle").onchange = (e) => { cfg.soundStyle = e.target.value; save(); window.dispatchEvent(new CustomEvent("nyra-sfx-test")); };
+    modal.querySelectorAll("[data-bt]").forEach((b) => {
+      b.onclick = () => {
+        cfg.boardTheme = b.dataset.bt; save();
+        modal.querySelectorAll("[data-bt]").forEach((x) => x.classList.toggle("active", x === b));
+      };
+    });
     $("stVolume").oninput = (e) => { cfg.volume = Number(e.target.value); save(); };
     $("stTest").onclick = () => window.dispatchEvent(new CustomEvent("nyra-sfx-test"));
     if ($("stOffline")) {

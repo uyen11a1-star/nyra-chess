@@ -3,10 +3,10 @@ import { getNyraMove, hasLocalNyra } from "./nyra-client.js?v=4";
 import { reviewGame, CLASS_INFO, CLASS_ORDER } from "./nyra-review.js?v=3";
 import { initArena } from "./arena.js?v=2";
 import { StockfishEngine, SF_LEVELS } from "./stockfish-client.js?v=2";
-import { initI18n } from "./i18n.js?v=4";
-import { initSettings } from "./settings.js?v=4";
+import { initI18n } from "./i18n.js?v=5";
+import { initSettings } from "./settings.js?v=5";
 import { initPuzzle } from "./puzzle.js?v=5";
-import { sfx } from "./sound.js?v=3";
+import { sfx } from "./sound.js?v=4";
 import { slideMove } from "./fx.js?v=1";
 
 const $ = (id) => document.getElementById(id);
