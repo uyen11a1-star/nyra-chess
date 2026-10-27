@@ -34,23 +34,34 @@ function materialDiff(chess, color) {  // vật chất của `color` trừ đố
   return me - op;
 }
 
-// Chơi tối đa 4 nước đầu của đường đi chính (kết thúc sau nước của bên vừa đi) rồi đo vật chất
-function materialAfterPv(Chess, fen, pv, mover) {
-  let k = Math.min(pv.length, 4);
+// Chơi tối đa 6 nước đầu của đường đi chính (kết thúc sau nước của bên vừa đi), theo dõi vật chất của bên vừa đi
+// so với trước khi đi: `worst` = lúc hụt nhiều nhất, `final` = cuối đường đi.
+function materialAfterPv(Chess, fen, pv, mover, before) {
+  let k = Math.min(pv.length, 6);
   if (k % 2 === 1) k--;
   if (k < 2) return null;
   try {
     const c = new Chess(fen);
-    for (let i = 0; i < k; i++) c.move({ from: pv[i].slice(0, 2), to: pv[i].slice(2, 4), promotion: pv[i][4] });
-    return materialDiff(c, mover);
+    let worst = 0, final = 0;
+    for (let i = 0; i < k; i++) {
+      c.move({ from: pv[i].slice(0, 2), to: pv[i].slice(2, 4), promotion: pv[i][4] });
+      const d = materialDiff(c, mover) - before;
+      if (d < worst) worst = d;
+      final = d;
+    }
+    return { worst, final };
   } catch (e) { return null; }
 }
 
 function classify(x) {
-  const { isBest, loss, wpBest, wpAfter, wpSecond, legal, isBook, sacrifice } = x;
+  const { isBest, loss, wpBest, wpAfter, wpSecond, legal, isBook, sacrifice, sacSize, matBefore } = x;
   if (isBook) return "book";
   const nearBest = isBest || loss <= 0.5;
-  if ((nearBest || loss <= 2) && sacrifice && wpAfter >= 50 && wpBest <= 85) return "brilliant";
+  // Thiên tài (!!): nước tốt nhất (hoặc gần nhất) + hy sinh quân thật sự (không lấy lại được trong ~3 nước) + sau đó vẫn tốt,
+  // và nước hy sinh phải có ý nghĩa: bên đi chưa hơn quân lớn từ trước, và không phải thế nào cũng thắng bằng cách khác
+  // (riêng hy sinh từ Xe trở lên — 5 điểm — thì luôn tính, vì dù còn đường thắng khác thì đó vẫn là nước đẹp).
+  if (nearBest && sacrifice && legal >= 2 && wpAfter >= 55 && matBefore <= 3 &&
+      (wpSecond === null || wpSecond <= 92 || wpBest - wpSecond >= 8 || sacSize >= 5)) return "brilliant";
   if (nearBest) {
     if (isBest && legal >= 2 && wpSecond !== null && wpBest - wpSecond >= 15 && wpBest <= 95) return "great";
     return "best";
@@ -80,6 +91,8 @@ export function makeAnalyzer() {
 }
 
 // moves: [{from,to,promotion}]. Trả về { moves, summary, evals }
+const MAX_REFINE = 8, REFINE_X = 3;
+
 export async function reviewGame(moves, { Chess, timeMs = 350, onProgress, analyzer } = {}) {
   const az = analyzer || makeAnalyzer();
   try {
@@ -108,8 +121,7 @@ export async function reviewGame(moves, { Chess, timeMs = 350, onProgress, analy
       return winPercent(cp);
     });
 
-    const out = [];
-    for (let i = 0; i < n; i++) {
+    const judge = (i) => {
       const cur = an[i], nxt = an[i + 1], side = infos[i].side;
       const bestCp = toCp(cur.score);
       const isBest = infos[i].uci === cur.best;
@@ -120,21 +132,45 @@ export async function reviewGame(moves, { Chess, timeMs = 350, onProgress, analy
       const loss = isBest ? 0 : Math.max(0, wpBest - wpAfter);
       const wpSecond = typeof cur.second === "number" ? winPercent(toCp(cur.second)) : null;
       const isBook = !!(cur.book && cur.book.includes(infos[i].uci));
-      let sacrifice = false;
+      let sacrifice = false, sacSize = 0;
+      const matBefore = materialDiff(new Chess(fens[i]), side);
       if (!nxt.over && nxt.pv && (isBest || loss <= 2)) {
-        const before = materialDiff(new Chess(fens[i]), side);
-        const after = materialAfterPv(Chess, fens[i + 1], nxt.pv, side);
-        if (after !== null) sacrifice = after - before <= -2;
+        const r = materialAfterPv(Chess, fens[i + 1], nxt.pv, side, matBefore);
+        if (r) { sacrifice = r.worst <= -2 && r.final <= -2; sacSize = -r.worst; }
       }
-      const cls = classify({ isBest, loss, wpBest, wpAfter, wpSecond, legal: cur.legal || 0, isBook, sacrifice });
+      const cls = classify({ isBest, loss, wpBest, wpAfter, wpSecond, legal: cur.legal || 0, isBook, sacrifice, sacSize, matBefore });
       let bestSan = "";
       try {
         const c = new Chess(fens[i]);
         bestSan = c.move({ from: cur.best.slice(0, 2), to: cur.best.slice(2, 4), promotion: cur.best[4] }).san;
       } catch (e) {}
-      out.push({ ply: i, side, san: infos[i].san, uci: infos[i].uci, cls, loss, bestSan,
-                 bestUci: cur.best || "", acc: isBest ? 100 : moveAccuracy(loss), wpAfterWhite: evals[i + 1] });
+      return { ply: i, side, san: infos[i].san, uci: infos[i].uci, cls, loss, bestSan, sacrifice,
+               bestUci: cur.best || "", acc: isBest ? 100 : moveAccuracy(loss) };
+    };
+    const out = [];
+    for (let i = 0; i < n; i++) out.push(judge(i));
+
+    // Vòng 2 ("nghĩ kỹ lại"): với tối đa MAX_REFINE nước nghiêm trọng hoặc đặc biệt, phân tích lại hai thế bằng thời gian gấp REFINE_X
+    // để tránh phán nhầm "sai lầm nặng"/"thiên tài" chỉ vì lần quét nhanh nhìn chưa tới.
+    const cand = out.filter((m) => ["blunder", "mistake", "brilliant", "great"].includes(m.cls) || m.sacrifice)
+      .sort((a, b) => b.loss - a.loss).slice(0, MAX_REFINE).map((m) => m.ply).sort((a, b) => a - b);
+    if (cand.length) {
+      const need = new Set();
+      for (const i of cand) { need.add(i); if (i + 1 < n || (i + 1 === n && !over)) need.add(i + 1); }
+      let k = 0;
+      for (const j of [...need].sort((a, b) => a - b)) {
+        if (an[j] && an[j].over) continue;
+        an[j] = await az.analyze(fens[j], timeMs * REFINE_X);
+        if (onProgress) onProgress(total + (++k), total + need.size);
+      }
+      const redo = new Set();
+      for (const i of cand) { redo.add(i - 1); redo.add(i); redo.add(i + 1); }
+      for (const i of redo) if (i >= 0 && i < n) out[i] = judge(i);
+      // win% của Trắng sau mỗi nước dựa trên kết quả phân tích mới nhất
+      evals.length = 0;
+      an.forEach((a, j) => { const t = turnOf(j); let cp = a.over ? (a.mated ? -MATE_CP : 0) : toCp(a.score); if (t === "b") cp = -cp; evals.push(winPercent(cp)); });
     }
+    for (let i = 0; i < n; i++) out[i].wpAfterWhite = evals[i + 1];
 
     const summary = { w: { acc: 0, n: 0, counts: {} }, b: { acc: 0, n: 0, counts: {} } };
     for (const m of out) {

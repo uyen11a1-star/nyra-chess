@@ -1,6 +1,6 @@
 import { Chess } from "./vendor/chess.js?v=1";
 import { getNyraMove, hasLocalNyra } from "./nyra-client.js?v=4";
-import { reviewGame, CLASS_INFO, CLASS_ORDER } from "./nyra-review.js?v=3";
+import { reviewGame, CLASS_INFO, CLASS_ORDER } from "./nyra-review.js?v=4";
 import { initArena } from "./arena.js?v=2";
 import { StockfishEngine, SF_LEVELS } from "./stockfish-client.js?v=2";
 import { initI18n } from "./i18n.js?v=5";
