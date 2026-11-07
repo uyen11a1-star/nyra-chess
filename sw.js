@@ -41,6 +41,16 @@ async function staleWhileRevalidate(req) {
   return (await refresh) || Response.error();
 }
 
+// Thêm header cách ly cross-origin (COEP/COOP) vào mọi phản hồi cùng nguồn, kể cả bản đã lưu từ trước khi bật header.
+// Cần cho đa luồng: trang đã cách ly thì file worker cũng phải mang COEP, mà bản lưu cũ thì không có.
+function isolate(res) {
+  if (!res || res.type !== "basic" || res.status < 200 || res.status > 599) return res;  // lỗi / opaque / khác nguồn: giữ nguyên
+  const h = new Headers(res.headers);
+  h.set("Cross-Origin-Embedder-Policy", "require-corp");
+  h.set("Cross-Origin-Opener-Policy", "same-origin");
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers: h });
+}
+
 self.addEventListener("fetch", (e) => {
   const req = e.request;
   if (req.method !== "GET" || req.headers.has("range")) return;
@@ -49,8 +59,8 @@ self.addEventListener("fetch", (e) => {
   const gfont = url.hostname === "fonts.googleapis.com" || url.hostname === "fonts.gstatic.com";
   if (!same && !gfont) return;
   if (gfont) { e.respondWith(url.hostname === "fonts.gstatic.com" ? cacheFirst(req) : staleWhileRevalidate(req)); return; }
-  if (req.mode === "navigate" || url.pathname.endsWith(".html") || url.pathname.endsWith("/")) { e.respondWith(networkFirst(req, 3500)); return; }
-  if (url.pathname.endsWith("/puzzles/index.json")) { e.respondWith(networkFirst(req, 2500)); return; }
-  if (url.searchParams.has("v")) { e.respondWith(cacheFirst(req)); return; }
-  e.respondWith(staleWhileRevalidate(req));
+  if (req.mode === "navigate" || url.pathname.endsWith(".html") || url.pathname.endsWith("/")) { e.respondWith(networkFirst(req, 3500).then(isolate)); return; }
+  if (url.pathname.endsWith("/puzzles/index.json")) { e.respondWith(networkFirst(req, 2500).then(isolate)); return; }
+  if (url.searchParams.has("v")) { e.respondWith(cacheFirst(req).then(isolate)); return; }
+  e.respondWith(staleWhileRevalidate(req).then(isolate));
 });
