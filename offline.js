@@ -2,7 +2,7 @@
 const CACHE = "nyra-cache-v1";            // phải trùng với sw.js
 // File engine được tải theo URL cố định trong code (nyra-client.js / nyra-worker.js / stockfish-client.js).
 // Nếu sau này đổi số ?v= ở các file đó thì sửa lại đây cho khớp.
-const ENGINE = ["nyra-worker.js?v=3", "nyra.wasm?v=4", "nyra-wasi.js",
+const ENGINE = ["nyra-worker.js?v=3", "nyra.wasm?v=5", "nyra-wasi.js",
   "stockfish/stockfish-19-lite-single.js", "stockfish/stockfish-19-lite-single.wasm", "manifest.json"];
 
 export const offlineSupported = () => "caches" in window && "serviceWorker" in navigator;

@@ -4,7 +4,7 @@ let ex = null, ready = null;
 
 function init() {
   if (!ready) ready = (async () => {
-    const resp = await fetch("nyra.wasm?v=4");
+    const resp = await fetch("nyra.wasm?v=5");
     if (!resp.ok) throw new Error("Không tải được nyra.wasm");
     const bytes = await resp.arrayBuffer();
     const imports = { wasi_snapshot_preview1: nyraCreateWasi(() => ex.memory) };
