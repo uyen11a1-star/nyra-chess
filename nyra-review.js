@@ -53,6 +53,31 @@ function materialAfterPv(Chess, fen, pv, mover, before) {
   } catch (e) { return null; }
 }
 
+// ---- Nhận ra hy sinh quân bằng trao đổi quân trên ô đích (không phụ thuộc đường đi chính ngắn hay dài) ----
+const SEE_VAL = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 100 };
+// Bên đang đi bắt trên ô `to` bằng quân rẻ nhất trước, dừng khi bắt tiếp không có lợi. Trả về lợi tối đa (>= 0).
+function exchangeGain(c, to, depth) {
+  if (depth > 10) return 0;
+  const caps = c.moves({ verbose: true }).filter((m) => m.to === to && m.captured && !m.promotion);
+  if (!caps.length) return 0;
+  caps.sort((a, b) => SEE_VAL[a.piece] - SEE_VAL[b.piece]);
+  const m = caps[0];
+  c.move(m);
+  const gain = SEE_VAL[m.captured] - exchangeGain(c, to, depth + 1);
+  c.undo();
+  return Math.max(0, gain);
+}
+// net = số điểm bên đi bị hụt sau chuỗi bắt trên ô đích; offered = giá trị quân đang đứng trên ô đó (quân bị "dâng")
+function sacrificeBySee(Chess, fen, uci) {
+  try {
+    const c = new Chess(fen);
+    const m = c.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] });
+    if (!m || m.promotion) return { net: 0, offered: 0 };
+    const got = m.captured ? SEE_VAL[m.captured] : 0;
+    return { net: Math.max(0, exchangeGain(c, m.to, 0) - got), offered: SEE_VAL[m.piece] };
+  } catch (e) { return { net: 0, offered: 0 }; }
+}
+
 function classify(x) {
   const { isBest, loss, wpBest, wpAfter, wpSecond, legal, isBook, sacrifice, sacSize, matBefore } = x;
   if (isBook) return "book";
@@ -74,7 +99,7 @@ function classify(x) {
 }
 
 export function makeAnalyzer() {
-  const w = new Worker("nyra-worker.js?v=3");
+  const w = new Worker("nyra-worker.js?v=4");
   let id = 0;
   const pend = new Map();
   w.onmessage = (e) => {
@@ -91,7 +116,7 @@ export function makeAnalyzer() {
 }
 
 // moves: [{from,to,promotion}]. Trả về { moves, summary, evals }
-const MAX_REFINE = 8, REFINE_X = 3;
+const MAX_REFINE = 10, REFINE_X = 3;
 
 export async function reviewGame(moves, { Chess, timeMs = 350, onProgress, analyzer } = {}) {
   const az = analyzer || makeAnalyzer();
@@ -138,13 +163,18 @@ export async function reviewGame(moves, { Chess, timeMs = 350, onProgress, analy
         const r = materialAfterPv(Chess, fens[i + 1], nxt.pv, side, matBefore);
         if (r) { sacrifice = r.worst <= -2 && r.final <= -2; sacSize = -r.worst; }
       }
+      // hy sinh theo trao đổi quân: hụt >= 2 điểm, hoặc dâng một quân (mã/tượng trở lên) mà hụt >= 1 điểm (vd mã đổi 2 tốt)
+      const see = sacrificeBySee(Chess, fens[i], infos[i].uci);
+      const seeFlag = see.net >= 2 || (see.net >= 1 && see.offered >= 3);
+      const sacCand = seeFlag && !isBook;
+      if (seeFlag && !isBook && (isBest || loss <= 2)) { sacrifice = true; sacSize = Math.max(sacSize, see.net); }
       const cls = classify({ isBest, loss, wpBest, wpAfter, wpSecond, legal: cur.legal || 0, isBook, sacrifice, sacSize, matBefore });
       let bestSan = "";
       try {
         const c = new Chess(fens[i]);
         bestSan = c.move({ from: cur.best.slice(0, 2), to: cur.best.slice(2, 4), promotion: cur.best[4] }).san;
       } catch (e) {}
-      return { ply: i, side, san: infos[i].san, uci: infos[i].uci, cls, loss, bestSan, sacrifice,
+      return { ply: i, side, san: infos[i].san, uci: infos[i].uci, cls, loss, bestSan, sacrifice, sacCand,
                bestUci: cur.best || "", acc: isBest ? 100 : moveAccuracy(loss) };
     };
     const out = [];
@@ -152,8 +182,12 @@ export async function reviewGame(moves, { Chess, timeMs = 350, onProgress, analy
 
     // Vòng 2 ("nghĩ kỹ lại"): với tối đa MAX_REFINE nước nghiêm trọng hoặc đặc biệt, phân tích lại hai thế bằng thời gian gấp REFINE_X
     // để tránh phán nhầm "sai lầm nặng"/"thiên tài" chỉ vì lần quét nhanh nhìn chưa tới.
-    const cand = out.filter((m) => ["blunder", "mistake", "brilliant", "great"].includes(m.cls) || m.sacrifice)
-      .sort((a, b) => b.loss - a.loss).slice(0, MAX_REFINE).map((m) => m.ply).sort((a, b) => a - b);
+    // Ưu tiên các nước nghi là hy sinh hay (loss nhỏ trước) vì quét nhanh dễ nhìn chưa tới; sau đó mới đến các nước nặng nhất.
+    const susp = out.filter((m) => m.sacCand && m.loss <= 15).sort((a, b) => a.loss - b.loss).slice(0, 5);
+    const heavy = out.filter((m) => ["blunder", "mistake", "brilliant", "great"].includes(m.cls) || m.sacrifice).sort((a, b) => b.loss - a.loss);
+    const pick = [];
+    for (const m of [...susp, ...heavy]) if (!pick.includes(m) && pick.length < MAX_REFINE) pick.push(m);
+    const cand = pick.map((m) => m.ply).sort((a, b) => a - b);
     if (cand.length) {
       const need = new Set();
       for (const i of cand) { need.add(i); if (i + 1 < n || (i + 1 === n && !over)) need.add(i + 1); }
