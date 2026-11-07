@@ -85,7 +85,9 @@ function classify(x) {
   // Thiên tài (!!): nước tốt nhất (hoặc gần nhất) + hy sinh quân thật sự (không lấy lại được trong ~3 nước) + sau đó vẫn tốt,
   // và nước hy sinh phải có ý nghĩa: bên đi chưa hơn quân lớn từ trước, và không phải thế nào cũng thắng bằng cách khác
   // (riêng hy sinh từ Xe trở lên — 5 điểm — thì luôn tính, vì dù còn đường thắng khác thì đó vẫn là nước đẹp).
-  if (nearBest && sacrifice && legal >= 2 && wpAfter >= 55 && matBefore <= 3 &&
+  // Nước hy sinh thật thì nới "gần tốt nhất" lên 1,5% (chênh nhỏ giữa hai lần quét là nhiễu, không nên làm lỡ nước đẹp)
+  const nearBestSac = isBest || loss <= 1.5;
+  if (nearBestSac && sacrifice && legal >= 2 && wpAfter >= 55 && matBefore <= 3 &&
       (wpSecond === null || wpSecond <= 92 || wpBest - wpSecond >= 8 || sacSize >= 5)) return "brilliant";
   if (nearBest) {
     if (isBest && legal >= 2 && wpSecond !== null && wpBest - wpSecond >= 15 && wpBest <= 95) return "great";
@@ -98,27 +100,51 @@ function classify(x) {
   return "blunder";
 }
 
-export function makeAnalyzer() {
-  const w = new Worker("nyra-worker.js?v=4");
+// Số worker chạy song song: phân tích từng thế cờ độc lập nên chia thế cờ cho nhiều worker là nhanh gần tuyệt đối theo số nhân
+export function pickWorkers() {
+  const hc = (typeof navigator !== "undefined" && navigator.hardwareConcurrency) || 2;
+  return Math.max(1, Math.min(4, Math.floor(hc / 2)));
+}
+export function makeAnalyzer(nWorkers = pickWorkers()) {
+  // "#st" ép mỗi worker chạy 1 luồng (nhiều worker chạy song song theo thế cờ hiệu quả hơn nhiều luồng trong một lần tìm)
+  const ws = [];
   let id = 0;
   const pend = new Map();
-  w.onmessage = (e) => {
-    const p = pend.get(e.data.id);
-    if (!p) return;
-    pend.delete(e.data.id);
-    if (e.data.error) p.rej(new Error(e.data.error)); else p.res(e.data.result);
-  };
-  w.onerror = () => { for (const [, p] of pend) p.rej(new Error("Worker lỗi")); pend.clear(); };
+  for (let k = 0; k < nWorkers; k++) {
+    const w = new Worker("nyra-worker.js?v=5#st");
+    w.onmessage = (e) => {
+      const p = pend.get(e.data.id);
+      if (!p) return;
+      pend.delete(e.data.id);
+      if (e.data.error) p.rej(new Error(e.data.error)); else p.res(e.data.result);
+    };
+    w.onerror = () => { for (const [, p] of pend) p.rej(new Error("Worker lỗi")); pend.clear(); };
+    ws.push(w);
+  }
+  const send = (w, fen, timeMs, played) => new Promise((res, rej) => { const i = ++id; pend.set(i, { res, rej }); w.postMessage({ id: i, fen, timeMs, type: "analyze", played: played || "" }); });
   return {
-    analyze: (fen, timeMs) => new Promise((res, rej) => { const i = ++id; pend.set(i, { res, rej }); w.postMessage({ id: i, fen, timeMs, type: "analyze" }); }),
-    close: () => w.terminate(),
+    analyze: (fen, timeMs, played) => send(ws[0], fen, timeMs, played),
+    // items: [{fen, timeMs, played}] -> kết quả theo đúng thứ tự. Chia thành các đoạn liên tiếp cho từng worker để bảng băm dùng lại được giữa thế cờ kề nhau.
+    analyzeBatch: async (items, onItem) => {
+      const out = new Array(items.length);
+      const P = Math.max(1, Math.min(ws.length, items.length));
+      const chunk = Math.ceil(items.length / P);
+      await Promise.all(ws.slice(0, P).map(async (w, k) => {
+        for (let j = k * chunk; j < Math.min(items.length, (k + 1) * chunk); j++) {
+          out[j] = await send(w, items[j].fen, items[j].timeMs, items[j].played);
+          if (onItem) onItem();
+        }
+      }));
+      return out;
+    },
+    close: () => ws.forEach((w) => w.terminate()),
   };
 }
 
 // moves: [{from,to,promotion}]. Trả về { moves, summary, evals }
-const MAX_REFINE = 10, REFINE_X = 3;
+const DEF_REFINE = 6, DEF_REFINE_X = 2.5;
 
-export async function reviewGame(moves, { Chess, timeMs = 350, onProgress, analyzer } = {}) {
+export async function reviewGame(moves, { Chess, timeMs = 150, maxRefine = DEF_REFINE, refineX = DEF_REFINE_X, onProgress, analyzer } = {}) {
   const az = analyzer || makeAnalyzer();
   try {
     const chess = new Chess();
@@ -131,11 +157,17 @@ export async function reviewGame(moves, { Chess, timeMs = 350, onProgress, analy
     }
     const n = infos.length, over = chess.isGameOver(), mated = chess.isCheckmate();
     const total = over ? n : n + 1;
-    const an = [];
-    for (let i = 0; i < total; i++) {
-      an[i] = await az.analyze(fens[i], timeMs);
-      if (onProgress) onProgress(i + 1, total);
-    }
+    // Chạy cho mọi thế cờ (song song nếu analyzer có analyzeBatch); truyền nước đã đi để engine chỉ tìm "nước tốt thứ hai" khi cần
+    const runAll = async (idxs, ms, tickBase, tickTotal) => {
+      const items = idxs.map((j) => ({ fen: fens[j], timeMs: ms, played: j < n ? infos[j].uci : "" }));
+      let k = 0;
+      const tick = () => { if (onProgress) onProgress(tickBase + (++k), tickTotal); };
+      if (az.analyzeBatch) return az.analyzeBatch(items, tick);
+      const res = [];
+      for (const it of items) { res.push(await az.analyze(it.fen, it.timeMs, it.played)); tick(); }
+      return res;
+    };
+    const an = await runAll([...Array(total).keys()], timeMs, 0, total);
     if (over) an[n] = { over: true, mated };
 
     const turnOf = (j) => fens[j].split(" ")[1];
@@ -186,17 +218,14 @@ export async function reviewGame(moves, { Chess, timeMs = 350, onProgress, analy
     const susp = out.filter((m) => m.sacCand && m.loss <= 15).sort((a, b) => a.loss - b.loss).slice(0, 5);
     const heavy = out.filter((m) => ["blunder", "mistake", "brilliant", "great"].includes(m.cls) || m.sacrifice).sort((a, b) => b.loss - a.loss);
     const pick = [];
-    for (const m of [...susp, ...heavy]) if (!pick.includes(m) && pick.length < MAX_REFINE) pick.push(m);
+    for (const m of [...susp, ...heavy]) if (!pick.includes(m) && pick.length < maxRefine) pick.push(m);
     const cand = pick.map((m) => m.ply).sort((a, b) => a - b);
     if (cand.length) {
       const need = new Set();
       for (const i of cand) { need.add(i); if (i + 1 < n || (i + 1 === n && !over)) need.add(i + 1); }
-      let k = 0;
-      for (const j of [...need].sort((a, b) => a - b)) {
-        if (an[j] && an[j].over) continue;
-        an[j] = await az.analyze(fens[j], timeMs * REFINE_X);
-        if (onProgress) onProgress(total + (++k), total + need.size);
-      }
+      const js = [...need].sort((a, b) => a - b).filter((j) => !(an[j] && an[j].over));
+      const re = await runAll(js, Math.round(timeMs * refineX), total, total + js.length);
+      js.forEach((j, q) => { an[j] = re[q]; });
       const redo = new Set();
       for (const i of cand) { redo.add(i - 1); redo.add(i); redo.add(i + 1); }
       for (const i of redo) if (i >= 0 && i < n) out[i] = judge(i);

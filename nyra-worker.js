@@ -2,17 +2,19 @@
 // Có đa luồng (nyra-mt.wasm) khi trình duyệt cho phép (trang cross-origin isolated); không thì chạy 1 luồng như cũ.
 importScripts("nyra-wasi.js?v=2");
 let ex = null, ready = null, threadCount = 1;
+// Worker của bể phân tích ván được mở với "#st" -> luôn chạy 1 luồng (song song theo thế cờ hiệu quả hơn chia luồng trong một lần tìm)
+const FORCE_SINGLE = /(^|[#&])st($|&)/.test((self.location && self.location.hash) || "");
 
 function pickThreads() {
   const hc = (typeof navigator !== "undefined" && navigator.hardwareConcurrency) || 1;
   return Math.max(1, Math.min(4, Math.floor(hc / 2)));
 }
 function canThreads() {
-  return typeof SharedArrayBuffer !== "undefined" && self.crossOriginIsolated === true && pickThreads() >= 2;
+  return !FORCE_SINGLE && typeof SharedArrayBuffer !== "undefined" && self.crossOriginIsolated === true && pickThreads() >= 2;
 }
 
 async function initMT() {
-  const resp = await fetch("nyra-mt.wasm?v=1");
+  const resp = await fetch("nyra-mt.wasm?v=2");
   if (!resp.ok) throw new Error("Không tải được nyra-mt.wasm");
   const module = await WebAssembly.compile(await resp.arrayBuffer());
   const memory = new WebAssembly.Memory({ initial: 512, maximum: 4096, shared: true });
@@ -46,7 +48,7 @@ async function initMT() {
 }
 
 async function initSingle() {
-  const resp = await fetch("nyra.wasm?v=5");
+  const resp = await fetch("nyra.wasm?v=6");
   if (!resp.ok) throw new Error("Không tải được nyra.wasm");
   const bytes = await resp.arrayBuffer();
   const imports = { wasi_snapshot_preview1: nyraCreateWasi(() => ex.memory) };
@@ -77,14 +79,27 @@ function readCString(ptr) {
 }
 
 self.onmessage = async (e) => {
-  const { id, fen, timeMs, type } = e.data;
+  const { id, fen, timeMs, type, played } = e.data;
   try {
     await init();
     const bytes = new TextEncoder().encode(fen);
     const p = ex.nyra_alloc(bytes.length + 1);
     const m = new Uint8Array(ex.memory.buffer);
     m.set(bytes, p); m[p + bytes.length] = 0;
-    const out = (type === "analyze" ? ex.nyra_analyze : ex.nyra_move)(p, timeMs || 2000);
+    let out;
+    if (type === "analyze" && ex.nyra_analyze_fast) {  // phân tích nhanh: biết nước đã đi để bỏ qua việc tìm "nước tốt thứ hai" khi không cần
+      let pp = 0;
+      if (played) {
+        const pb = new TextEncoder().encode(played);
+        pp = ex.nyra_alloc(pb.length + 1);
+        const mm = new Uint8Array(ex.memory.buffer);
+        mm.set(pb, pp); mm[pp + pb.length] = 0;
+      }
+      out = ex.nyra_analyze_fast(p, timeMs || 150, pp);
+      if (pp) ex.nyra_free(pp);
+    } else {
+      out = (type === "analyze" ? ex.nyra_analyze : ex.nyra_move)(p, timeMs || 2000);
+    }
     const json = readCString(out);
     ex.nyra_free(p);
     self.postMessage({ id, result: JSON.parse(json), threads: threadCount });

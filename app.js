@@ -1,6 +1,6 @@
 import { Chess } from "./vendor/chess.js?v=1";
-import { getNyraMove, hasLocalNyra } from "./nyra-client.js?v=4";
-import { reviewGame, CLASS_INFO, CLASS_ORDER } from "./nyra-review.js?v=5";
+import { getNyraMove, hasLocalNyra } from "./nyra-client.js?v=5";
+import { reviewGame, CLASS_INFO, CLASS_ORDER } from "./nyra-review.js?v=6";
 import { initArena } from "./arena.js?v=2";
 import { StockfishEngine, SF_LEVELS } from "./stockfish-client.js?v=2";
 import { initI18n } from "./i18n.js?v=5";
@@ -564,7 +564,7 @@ async function runAutoReview() {
       })),
       {
         Chess,
-        timeMs: 350,
+        timeMs: 150,
         onProgress: (i, t) => {
           if (box) box.innerHTML =
             `<p class="rv-progress">Phân tích tự động… ${i}/${t}</p><div class="rv-bar"><div style="width:${(i / t * 100).toFixed(0)}%"></div></div>`;
@@ -1198,7 +1198,7 @@ function runReviewInBox(boxId, btnId) {
         })),
         {
           Chess,
-          timeMs: 350,
+          timeMs: 150,
           onProgress: (i, t) => {
             box.innerHTML =
               `<p class="rv-progress">Nyra đang phân tích… ${i}/${t}</p><div class="rv-bar"><div style="width:${(i / t * 100).toFixed(0)}%"></div></div>`;
