@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Nyra — kiểm tra đa luồng</title>
+<style>body{font:16px/1.5 system-ui,sans-serif;background:#111;color:#eee;padding:16px}code,pre{background:#222;padding:2px 6px;border-radius:4px}b.ok{color:#6c6}b.no{color:#e66}</style></head>
+<body>
+<h3>Nyra — kiểm tra đa luồng</h3>
+<p>Cách ly cross-origin (crossOriginIsolated): <span id="iso"></span></p>
+<p>Số nhân CPU báo cáo: <span id="hc"></span></p>
+<p>Bộ nhớ chung (SharedArrayBuffer): <span id="sab"></span></p>
+<p id="status">Đang chạy thử 1 giây…</p>
+<pre id="out"></pre>
+<script>
+const yn = (v) => v ? '<b class="ok">CÓ</b>' : '<b class="no">KHÔNG</b>';
+document.getElementById('iso').innerHTML = yn(self.crossOriginIsolated);
+document.getElementById('hc').textContent = navigator.hardwareConcurrency || '?';
+document.getElementById('sab').innerHTML = yn(typeof SharedArrayBuffer !== 'undefined');
+const w = new Worker('nyra-worker.js?v=4');
+const t0 = performance.now();
+w.onmessage = (e) => {
+  const m = e.data;
+  if (m.error) { document.getElementById('status').innerHTML = '<b class="no">Lỗi:</b> ' + m.error; return; }
+  document.getElementById('status').innerHTML = 'Nyra dùng <b class="' + (m.threads > 1 ? 'ok' : 'no') + '">' + m.threads + ' luồng</b> (khởi động + tìm 1 giây: ' + Math.round(performance.now() - t0) + ' ms)';
+  document.getElementById('out').textContent = JSON.stringify({ best: m.result.best, depth: m.result.depth, score: m.result.score }, null, 1);
+};
+w.onerror = (e) => { document.getElementById('status').innerHTML = '<b class="no">Worker lỗi:</b> ' + e.message; };
+w.postMessage({ id: 1, fen: 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3', timeMs: 1000, type: 'analyze' });
+</script></body></html>

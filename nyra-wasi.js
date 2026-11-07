@@ -20,10 +20,17 @@ function nyraCreateWasi(getMemory) {
       d.setUint32(nwrittenPtr, n, true);
       return OK;
     },
+    sched_yield() { return OK; },
     proc_exit(code) { throw new Error("nyra.wasm thoát (mã " + code + ")"); },
     random_get(ptr, len) {
+      // getRandomValues không nhận vùng nhớ chung (SharedArrayBuffer) nên sinh ra bộ đệm tạm rồi chép vào
       const a = new Uint8Array(getMemory().buffer, ptr, len);
-      for (let o = 0; o < len; o += 65536) crypto.getRandomValues(a.subarray(o, Math.min(len, o + 65536)));
+      const tmp = new Uint8Array(Math.min(len, 65536));
+      for (let o = 0; o < len; o += 65536) {
+        const n = Math.min(len - o, 65536);
+        crypto.getRandomValues(tmp.subarray(0, n));
+        a.set(tmp.subarray(0, n), o);
+      }
       return OK;
     },
   };

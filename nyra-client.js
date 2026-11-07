@@ -9,7 +9,7 @@ function getWorker() {
   if (broken || typeof Worker === "undefined" || typeof WebAssembly === "undefined") return null;
   if (!worker) {
     try {
-      worker = new Worker("nyra-worker.js?v=3");
+      worker = new Worker("nyra-worker.js?v=4");
       worker.onmessage = (e) => {
         const p = pending.get(e.data.id);
         if (!p) return;
