@@ -3,12 +3,12 @@ import { getNyraMove, hasLocalNyra } from "./nyra-client.js?v=5";
 import { reviewGame, CLASS_INFO, CLASS_ORDER } from "./nyra-review.js?v=6";
 import { initArena } from "./arena.js?v=2";
 import { StockfishEngine, SF_LEVELS } from "./stockfish-client.js?v=2";
-import { initI18n } from "./i18n.js?v=5";
+import { initI18n, getLang } from "./i18n.js?v=5";
 import { initSettings } from "./settings.js?v=5";
 import { initPuzzle } from "./puzzle.js?v=5";
 import { sfx } from "./sound.js?v=4";
 import { slideMove } from "./fx.js?v=1";
-import { coachLine, buildCoach, setCoach } from "./coach.js?v=1";
+import { coachLine, buildCoach, setCoach } from "./coach.js?v=2";
 
 const $ = (id) => document.getElementById(id);
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -869,7 +869,7 @@ function renderMarking(panel, ply) {
   const svg = panel._svg;
   if (svg) svg.innerHTML = "";
   const rv = currentReview ? currentReview.moves.find(m => m.ply === ply) : null;
-  setCoach(panel._coach, coachLine(rv, ply));
+  setCoach(panel._coach, coachLine(rv, ply, { Chess, fen: positionAt(ply).fen(), lang: getLang(), evals: currentReview ? currentReview.evals : null }));
   if (panel._info) {
     if (!rv) {
       panel._info.textContent = "Ván này chưa có phân tích của Nyra — bấm “Phân tích ván bằng Nyra”.";
