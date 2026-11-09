@@ -1,6 +1,6 @@
 import { Chess } from "./vendor/chess.js?v=1";
 import { getNyraMove, hasLocalNyra } from "./nyra-client.js?v=5";
-import { reviewGame, CLASS_INFO, CLASS_ORDER } from "./nyra-review.js?v=6";
+import { reviewGame, CLASS_INFO, CLASS_ORDER, judgeTry, makeAnalyzer } from "./nyra-review.js?v=7";
 import { initArena } from "./arena.js?v=2";
 import { StockfishEngine, SF_LEVELS } from "./stockfish-client.js?v=2";
 import { initI18n, getLang } from "./i18n.js?v=5";
@@ -8,7 +8,7 @@ import { initSettings } from "./settings.js?v=5";
 import { initPuzzle } from "./puzzle.js?v=5";
 import { sfx } from "./sound.js?v=4";
 import { slideMove } from "./fx.js?v=1";
-import { coachLine, buildCoach, setCoach } from "./coach.js?v=2";
+import { coachLine, buildCoach, setCoach, coachThinking, coachTryHint } from "./coach.js?v=4";
 
 const $ = (id) => document.getElementById(id);
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -677,6 +677,8 @@ function arrowNode(fromSq, toSq, color, opacity, width) {
 function closeMarkingBoard() {
   markingBoardOpen = false;
   const panel = $("moveBoardPanel");
+  if (panel) panel._try = null;
+  if (tryAz) { try { tryAz.close(); } catch (e) {} tryAz = null; }
   if (panel) panel.classList.remove("open");
 }
 
@@ -750,6 +752,23 @@ function buildMarkingBoard() {
   const coach = buildCoach();
   panel.appendChild(coach);
   panel._coach = coach;
+  const tryBar = document.createElement("div");
+  tryBar.className = "mb-trybar";
+  const mkTry = (label, fn) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "nav-btn try-btn";
+    b.textContent = label;
+    b.addEventListener("click", fn);
+    tryBar.appendChild(b);
+    return b;
+  };
+  panel._tryUi = {
+    enter: mkTry("🎯 Thử nước khác", () => tryEnter(panel)),
+    reset: mkTry("↺ Thử lại", () => tryReset(panel)),
+    exit: mkTry("✕ Thoát thử", () => tryExit(panel)),
+  };
+  panel.appendChild(tryBar);
 
   const legend = document.createElement("div");
   legend.className = "mb-legend";
@@ -825,6 +844,8 @@ function renderMarking(panel, ply) {
   if (n === 0) return;
   ply = Math.max(0, Math.min(n - 1, Number.isFinite(ply) ? ply : 0));
   panel._ply = ply;
+  panel._try = null;
+  syncTryUi(panel);
 
   const pos = positionAt(ply + 1);
   const mv = hist[ply];
@@ -901,6 +922,148 @@ function renderMarking(panel, ply) {
   const bestUci = String(rv.bestUci || "");
   if (svg && bestUci.length >= 4 && bestUci !== uci) {
     svg.appendChild(arrowNode(bestUci.slice(0, 2), bestUci.slice(2, 4), "#4fd6a0", 0.5, 1.1));
+  }
+}
+
+// ---- Thử nước: người chơi đi thử một nước tại thế cờ trước nước `ply`, Nyra chấm bằng engine ----
+let tryAz = null;
+const getTryAz = () => tryAz || (tryAz = makeAnalyzer(2));
+
+function syncTryUi(panel) {
+  const u = panel && panel._tryUi;
+  if (!u) return;
+  const t = panel._try;
+  u.enter.style.display = t ? "none" : "";
+  u.reset.style.display = t && t.done && !t.busy ? "" : "none";
+  u.exit.style.display = t ? "" : "none";
+}
+
+function tryEnter(panel) {
+  if (!hasLocalNyra()) {
+    setCoach(panel._coach, { mood: "sad", text: getLang() === "en" ? "This browser can't run Nyra WebAssembly, so Nyro can't rate moves." : "Trình duyệt này chưa chạy được Nyra WebAssembly nên Nyro chưa chấm nước được." });
+    return;
+  }
+  const ply = panel._ply ?? 0;
+  const pos = positionAt(ply);
+  panel._try = { ply, fen: pos.fen(), sel: null, targets: [], done: null, busy: false };
+  if (panel._svg) panel._svg.innerHTML = "";
+  if (panel._info) panel._info.textContent = getLang() === "en" ? `Trying instead of move ${ply + 1}` : `Đang thử thay cho nước ${ply + 1}`;
+  setCoach(panel._coach, { mood: "idle", text: coachTryHint(getLang()) });
+  renderTry(panel);
+}
+
+function tryReset(panel) {
+  const t = panel._try;
+  if (!t || t.busy) return;
+  t.done = null; t.sel = null; t.targets = [];
+  if (panel._svg) panel._svg.innerHTML = "";
+  setCoach(panel._coach, { mood: "idle", text: coachTryHint(getLang()) });
+  renderTry(panel);
+}
+
+function tryExit(panel) {
+  if (!panel._try) return;
+  panel._try = null;
+  renderMarking(panel, panel._ply ?? 0);
+}
+
+function tryTap(panel, sq) {
+  const t = panel._try;
+  if (!t || t.busy || t.done) return;
+  if (t.sel && t.targets.includes(sq)) { tryPlay(panel, t.sel, sq); return; }
+  const pos = new Chess(t.fen);
+  const p = pos.get(sq);
+  if (p && p.color === pos.turn() && sq !== t.sel) {
+    t.sel = sq;
+    t.targets = pos.moves({ square: sq, verbose: true }).map(m => m.to);
+  } else {
+    t.sel = null;
+    t.targets = [];
+  }
+  renderTry(panel);
+}
+
+async function tryPlay(panel, from, to) {
+  const t = panel._try;
+  if (!t) return;
+  const pos = new Chess(t.fen);
+  let m;
+  try { m = pos.move({ from, to, promotion: "q" }); } catch (e) { return; }
+  if (!m) return;
+  const uci = from + to + (m.promotion || "");
+  t.busy = true; t.sel = null; t.targets = [];
+  t.done = { from, to, fenAfter: pos.fen(), rv: null };
+  renderTry(panel);
+  setCoach(panel._coach, { mood: "think", text: coachThinking(getLang()) });
+  try {
+    const rv = await judgeTry(Chess, t.fen, uci, { analyzer: getTryAz(), timeMs: 300 });
+    if (panel._try !== t) return;
+    t.done.rv = rv;
+    setCoach(panel._coach, coachLine(rv, 0, { Chess, fen: t.fen, lang: getLang(), evals: [rv.wpBeforeWhite, rv.wpAfterWhite] }));
+    const info = CLASS_INFO[rv.cls];
+    if (panel._info) {
+      panel._info.innerHTML =
+        `<b>${escapeHtml(rv.san)}</b> · <span style="color:${info.color}">${info.icon} ${info.label}</span>` +
+        (rv.bestSan && rv.bestUci !== uci ? ` · Nyra gợi ý <b>${escapeHtml(rv.bestSan)}</b>` : "") +
+        (rv.loss > 0 ? ` · mất ${rv.loss.toFixed(0)}% cơ hội thắng` : "");
+    }
+  } catch (e) {
+    if (panel._try !== t) return;
+    t.done = null;
+    setCoach(panel._coach, { mood: "sad", text: getLang() === "en" ? "Nyro couldn't analyze that move, try again." : "Nyro chưa phân tích được nước này, thử lại nhé." });
+  } finally {
+    if (panel._try === t) { t.busy = false; renderTry(panel); }
+  }
+}
+
+function renderTry(panel) {
+  const t = panel._try;
+  if (!t || !panel._boardEl) return;
+  const pos = new Chess(t.done ? t.done.fenAfter : t.fen);
+  const files = flipped ? "hgfedcba" : "abcdefgh";
+  const ranks = flipped ? "12345678" : "87654321";
+  panel._boardEl.innerHTML = "";
+  if (panel._svg) panel._svg.innerHTML = "";
+  if (panel._rowLabels) panel._rowLabels.innerHTML = [...ranks].map(r => `<span>${r}</span>`).join("");
+  if (panel._fileLabels) panel._fileLabels.innerHTML = [...files].map(f => `<span>${f}</span>`).join("");
+  for (const r of ranks) {
+    for (const f of files) {
+      const sq = f + r;
+      const isLight = ((f.charCodeAt(0) - 97) + Number(r)) % 2 === 0;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = `move-square ${isLight ? "light" : "dark"}`;
+      btn.dataset.sq = sq;
+      if (t.done && (t.done.from === sq || t.done.to === sq)) btn.classList.add("last-move");
+      if (t.sel === sq) btn.classList.add("try-sel");
+      if (t.targets.includes(sq)) btn.classList.add(pos.get(sq) ? "try-cap" : "try-target");
+      const piece = pos.get(sq);
+      if (piece) {
+        const span = document.createElement("span");
+        span.className = `move-piece ${piece.color === "w" ? "white" : "black"}`;
+        span.textContent = PIECES[piece.color][piece.type];
+        btn.appendChild(span);
+      }
+      btn.addEventListener("click", () => tryTap(panel, sq));
+      panel._boardEl.appendChild(btn);
+    }
+  }
+  syncTryUi(panel);
+  const rv = t.done && t.done.rv;
+  if (!rv) return;
+  const info = CLASS_INFO[rv.cls];
+  const destEl = panel._boardEl.querySelector(`.move-square[data-sq="${t.done.to}"]`);
+  if (destEl && info) {
+    const badge = document.createElement("span");
+    badge.className = "move-badge";
+    badge.style.background = info.color;
+    badge.textContent = info.icon;
+    badge.title = info.label;
+    destEl.appendChild(badge);
+  }
+  const bu = String(rv.bestUci || "");
+  if (panel._svg && BAD_CLASSES.includes(rv.cls) && bu.length >= 4 && bu !== rv.uci) {
+    panel._svg.appendChild(arrowNode(bu.slice(0, 2), bu.slice(2, 4), "#4fd6a0", 0.6, 1.2));
   }
 }
 

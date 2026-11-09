@@ -471,3 +471,8 @@ html[data-hints="off"] .square.legal::before, html[data-hints="off"] .square.cap
 .nyro-bubble{position:relative;flex:1;padding:9px 12px;border-radius:12px;background:#2a2a26;border:1px solid #d7b66c55;color:#eee;font-size:.92rem;line-height:1.35}
 .nyro-bubble::before{content:"";position:absolute;left:-7px;bottom:14px;width:12px;height:12px;background:#2a2a26;border-left:1px solid #d7b66c55;border-bottom:1px solid #d7b66c55;transform:rotate(45deg)}
 @media (prefers-reduced-motion:reduce){.nyro-img{animation:none!important}}
+.mb-trybar{display:flex;gap:8px;margin:6px 0}
+.mb-trybar .try-btn{flex:1;padding:8px 10px}
+.move-square.try-sel{box-shadow:inset 0 0 0 3px #4fd6a0aa}
+.move-square.try-target::before{content:"";position:absolute;width:30%;height:30%;border-radius:50%;background:#4fd6a099;z-index:1;pointer-events:none}
+.move-square.try-cap{box-shadow:inset 0 0 0 3px #4fd6a0aa}

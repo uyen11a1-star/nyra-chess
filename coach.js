@@ -41,9 +41,10 @@ function analyzeMove(Chess, fen, uci) {
   // quân nào của mình có thể bị ăn lời nhất
   let best = null;
   for (const m of c.moves({ verbose: true })) {
-    if (!m.captured) continue;
     const c2 = new Chess(c.fen());
     try { c2.move({ from: m.from, to: m.to, promotion: m.promotion }); } catch (e) { continue; }
+    if (c2.isCheckmate()) f.mateIn1 = m.san;
+    if (!m.captured) continue;
     const rec = c2.attackers(m.to, me).length > 0;
     const net = VAL[m.captured] - (rec ? ATT[m.piece] === 50 ? 0 : VAL[m.piece] : 0);
     if (!best || net > best.net) best = { net, cap: m.captured, sq: m.to, by: m.piece };
@@ -102,6 +103,8 @@ const L = {
       neu: ["Ừm,", "Để xem nào...", "Okay,", "Hmm,", "Cũng được,", "À,", "Nhìn qua thì", "Ừ,"],
       neg: ["Ối!", "Tiếc quá!", "Úi!", "Hừm...", "Khoan đã!", "Ôi không!", "Chà...", "Eo ơi,"],
     },
+    mateThreat: [(d) => `Đối thủ có thể chiếu hết ngay bằng ${d.MS}!`, (d) => `Nguy hiểm! ${d.MS} sẽ là chiếu hết.`, (d) => `${d.MS} của đối thủ sẽ chiếu hết đó.`],
+    quietMist: [(d) => `Thế cờ xấu đi nhiều sau nước này.`, (d) => `Đối thủ có cơ hội lớn sau nước này.`, (d) => `Nước này mở ra khó khăn lớn cho ${d.side}.`],
     capBad: [(d) => `Ăn ${d.C} ở ${d.To} trông hấp dẫn, nhưng còn nước hay hơn.`, (d) => `${d.P} ăn ${d.C} nghe ngon, tiếc là chưa phải hay nhất.`, (d) => `Thu ${d.C} ở ${d.To} thì được, nhưng thế cờ lại kém đi.`],
     side: { w: "Trắng", b: "Đen" },
   },
@@ -153,6 +156,8 @@ const L = {
       neu: ["Hmm,", "Let's see...", "Okay,", "Well,", "Alright,", "I see,", "At a glance,", "So,"],
       neg: ["Oops!", "Too bad!", "Yikes!", "Hmm...", "Hold on!", "Oh no!", "Ouch...", "Eek,"],
     },
+    mateThreat: [(d) => `The opponent can deliver mate with ${d.MS}!`, (d) => `Danger! ${d.MS} would be checkmate.`, (d) => `${d.MS} from the opponent would be mate.`],
+    quietMist: [(d) => `The position gets much worse after this.`, (d) => `The opponent gets a big chance after this move.`, (d) => `This opens up serious trouble for ${d.side}.`],
     capBad: [(d) => `Taking the ${d.C} on ${d.To} looks tempting, but there was better.`, (d) => `${d.P} takes ${d.C}, sounds good, just not the best.`, (d) => `Winning the ${d.C} on ${d.To} is fine, but the position gets worse.`],
     side: { w: "White", b: "Black" },
   },
@@ -192,6 +197,7 @@ function buildLine(rv, ply, ctx) {
     Object.assign(d, { P: N[f.piece], To: f.to, C: f.cap ? N[f.cap] : "", PR: f.promo ? N[f.promo] : "" });
     if (f.hang) Object.assign(d, { A: N[f.hang.att], U: f.hang.undef });
     if (f.threat) Object.assign(d, { C: N[f.threat.cap], TS: f.threat.sq, TA: N[f.threat.by] });
+    if (f.mateIn1) d.MS = f.mateIn1;
   }
   if (b) Object.assign(d, { BC: b.cap ? N[b.cap] : "" });
 
@@ -225,10 +231,12 @@ function buildLine(rv, ply, ctx) {
       parts.push(say(id, pool, d));
     }
   } else {
-    if (f && f.hang) parts.push(say("hang", T.hang, d));
+    if (f && f.mateIn1) parts.push(say("mateThreat", T.mateThreat, d));
+    else if (f && f.hang) parts.push(say("hang", T.hang, d));
     else if (f && f.threat) parts.push(say("threat", T.threat, d));
     else if (f && f.cap) parts.push(say("capBad", T.capBad, d));
-    else parts.push(say("quietBad", T.quietBad, d));
+    else if (rv.cls === "inaccuracy") parts.push(say("quietBad", T.quietBad, d));
+    else parts.push(say("quietMist", T.quietMist, d));
     if (rv.bestSan && rv.bestUci !== rv.uci) {
       let id = "bAny", pool = T.bAny;
       if (b) {
@@ -275,6 +283,17 @@ export function coachLine(rv, ply, ctx = {}) {
   cache.set(rv, out);
   return out;
 }
+
+const THINK = {
+  vi: ["Để Nyro xem nước này nào...", "Hmm, đang tính nhanh một chút...", "Chờ xíu, Nyro đang nghĩ nè.", "Nyro soi thế cờ đây...", "Đợi Nyro một nhịp nha!"],
+  en: ["Let Nyro take a look...", "Hmm, calculating for a moment...", "One sec, Nyro is thinking.", "Nyro is checking the position...", "Give Nyro a moment!"],
+};
+const TRYHINT = {
+  vi: ["Tới lượt bạn! Chạm vào quân rồi chạm ô đích để thử một nước.", "Thử một nước khác xem, Nyro sẽ chấm điểm ngay!", "Bạn sẽ đi nước nào? Nyro chờ nè.", "Đây là thế cờ lúc đó, thử tìm nước hay hơn đi!", "Thoải mái thử nha, đi sai cũng không sao đâu."],
+  en: ["Your turn! Tap a piece, then tap a square to try a move.", "Try another move and Nyro will rate it right away!", "Which move will you play? Nyro is waiting.", "This is the position back then, try to find something better!", "Feel free to experiment, a wrong move costs nothing."],
+};
+export const coachThinking = (lang) => pick(lang === "en" ? "en" : "vi", "think", THINK[lang === "en" ? "en" : "vi"].map((t) => () => t))();
+export const coachTryHint = (lang) => pick(lang === "en" ? "en" : "vi", "tryhint", TRYHINT[lang === "en" ? "en" : "vi"].map((t) => () => t))();
 
 export function buildCoach() {
   const el = document.createElement("div");

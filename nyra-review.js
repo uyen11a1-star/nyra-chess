@@ -247,3 +247,44 @@ export async function reviewGame(moves, { Chess, timeMs = 150, maxRefine = DEF_R
     if (!analyzer) az.close();
   }
 }
+
+// Chấm MỘT nước tuỳ ý trong thế cờ `fen` (dùng cho chế độ "thử nước"): cùng cách phân loại với reviewGame.
+// Trả về { side, san, uci, cls, loss, bestSan, bestUci, sacrifice, wpBeforeWhite, wpAfterWhite, fenAfter }
+export async function judgeTry(Chess, fen, uci, { analyzer, timeMs = 300 } = {}) {
+  const c = new Chess(fen);
+  const side = c.turn();
+  const mv = c.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] });
+  if (!mv) throw new Error("Nước đi không hợp lệ");
+  const fenAfter = c.fen(), over = c.isGameOver(), mated = c.isCheckmate();
+  const items = [{ fen, timeMs, played: uci }];
+  if (!over) items.push({ fen: fenAfter, timeMs, played: "" });
+  const res = analyzer.analyzeBatch ? await analyzer.analyzeBatch(items) : [await analyzer.analyze(fen, timeMs, uci), ...(over ? [] : [await analyzer.analyze(fenAfter, timeMs, "")])];
+  const cur = res[0], nxt = over ? { over: true, mated } : res[1];
+  const bestCp = toCp(cur.score);
+  const isBest = uci === cur.best;
+  let afterCp = nxt.over ? (nxt.mated ? MATE_CP : 0) : -toCp(nxt.score);
+  if (isBest) afterCp = bestCp;
+  const wpBest = winPercent(bestCp);
+  const wpAfter = Math.min(winPercent(afterCp), wpBest);
+  const loss = isBest ? 0 : Math.max(0, wpBest - wpAfter);
+  const wpSecond = typeof cur.second === "number" ? winPercent(toCp(cur.second)) : null;
+  const isBook = !!(cur.book && cur.book.includes(uci));
+  let sacrifice = false, sacSize = 0;
+  const matBefore = materialDiff(new Chess(fen), side);
+  if (!nxt.over && nxt.pv && (isBest || loss <= 2)) {
+    const r = materialAfterPv(Chess, fenAfter, nxt.pv, side, matBefore);
+    if (r) { sacrifice = r.worst <= -2 && r.final <= -2; sacSize = -r.worst; }
+  }
+  const see = sacrificeBySee(Chess, fen, uci);
+  const seeFlag = see.net >= 2 || (see.net >= 1 && see.offered >= 3);
+  if (seeFlag && !isBook && (isBest || loss <= 2)) { sacrifice = true; sacSize = Math.max(sacSize, see.net); }
+  const cls = classify({ isBest, loss, wpBest, wpAfter, wpSecond, legal: cur.legal || 0, isBook, sacrifice, sacSize, matBefore });
+  let bestSan = "";
+  try {
+    const c2 = new Chess(fen);
+    bestSan = c2.move({ from: cur.best.slice(0, 2), to: cur.best.slice(2, 4), promotion: cur.best[4] }).san;
+  } catch (e) {}
+  const toWhite = (wp) => (side === "w" ? wp : 100 - wp);
+  return { ply: 0, side, san: mv.san, uci, cls, loss, bestSan, bestUci: cur.best || "", sacrifice,
+           wpBeforeWhite: toWhite(wpBest), wpAfterWhite: toWhite(wpAfter), fenAfter };
+}
