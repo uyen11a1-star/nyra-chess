@@ -8,6 +8,7 @@ import { initSettings } from "./settings.js?v=5";
 import { initPuzzle } from "./puzzle.js?v=5";
 import { sfx } from "./sound.js?v=4";
 import { slideMove } from "./fx.js?v=1";
+import { coachLine, buildCoach, setCoach } from "./coach.js?v=1";
 
 const $ = (id) => document.getElementById(id);
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -746,6 +747,9 @@ function buildMarkingBoard() {
   info.className = "mb-info";
   panel.appendChild(wrap);
   panel.appendChild(info);
+  const coach = buildCoach();
+  panel.appendChild(coach);
+  panel._coach = coach;
 
   const legend = document.createElement("div");
   legend.className = "mb-legend";
@@ -865,6 +869,7 @@ function renderMarking(panel, ply) {
   const svg = panel._svg;
   if (svg) svg.innerHTML = "";
   const rv = currentReview ? currentReview.moves.find(m => m.ply === ply) : null;
+  setCoach(panel._coach, coachLine(rv, ply));
   if (panel._info) {
     if (!rv) {
       panel._info.textContent = "Ván này chưa có phân tích của Nyra — bấm “Phân tích ván bằng Nyra”.";

@@ -462,3 +462,12 @@ body.ar-video .ar-float:hover, body.ar-video .ar-float:focus-within { opacity: 1
 .bt-board i:nth-child(2), .bt-board i:nth-child(3) { background: var(--d); }
 html[data-coords="off"] :is(.rank-labels, .file-labels, .ar-coord, .move-label, .move-file) { visibility: hidden; }
 html[data-hints="off"] .square.legal::before, html[data-hints="off"] .square.capture::before { display: none; }
+
+/* Nyro — linh vật huấn luyện */
+.nyro-coach{display:flex;align-items:flex-end;gap:10px;margin:10px 0}
+.nyro-img{width:64px;height:auto;flex:none;image-rendering:auto}
+.nyro-coach[data-mood="wow"] .nyro-img,.nyro-coach[data-mood="happy"] .nyro-img{animation:nyro-hop .5s ease-out 1}
+@keyframes nyro-hop{0%{transform:translateY(0)}40%{transform:translateY(-8px)}100%{transform:translateY(0)}}
+.nyro-bubble{position:relative;flex:1;padding:9px 12px;border-radius:12px;background:#2a2a26;border:1px solid #d7b66c55;color:#eee;font-size:.92rem;line-height:1.35}
+.nyro-bubble::before{content:"";position:absolute;left:-7px;bottom:14px;width:12px;height:12px;background:#2a2a26;border-left:1px solid #d7b66c55;border-bottom:1px solid #d7b66c55;transform:rotate(45deg)}
+@media (prefers-reduced-motion:reduce){.nyro-img{animation:none!important}}
