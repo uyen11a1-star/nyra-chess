@@ -1,6 +1,6 @@
 // nyra-worker.js — chạy Nyra (WebAssembly) trong Web Worker, không chặn giao diện.
 // Có đa luồng (nyra-mt.wasm) khi trình duyệt cho phép (trang cross-origin isolated); không thì chạy 1 luồng như cũ.
-importScripts("nyra-wasi.js?v=2");
+importScripts("nyra-wasi.js?v=3");
 let ex = null, ready = null, threadCount = 1;
 // Worker của bể phân tích ván được mở với "#st" -> luôn chạy 1 luồng (song song theo thế cờ hiệu quả hơn chia luồng trong một lần tìm)
 const FORCE_SINGLE = /(^|[#&])st($|&)/.test((self.location && self.location.hash) || "");
@@ -79,13 +79,15 @@ function readCString(ptr) {
 }
 
 self.onmessage = async (e) => {
-  const { id, fen, timeMs, type, played } = e.data;
+  const { id, fen, timeMs, type, played, reset, vstep, countClock } = e.data;
   try {
     await init();
+    if (reset && threadCount === 1 && ex.nyra_init) ex.nyra_init();  // xoá trạng thái tìm kiếm (bảng băm...) để kết quả không phụ thuộc thế cờ đã phân tích trước đó
     const bytes = new TextEncoder().encode(fen);
     const p = ex.nyra_alloc(bytes.length + 1);
     const m = new Uint8Array(ex.memory.buffer);
     m.set(bytes, p); m[p + bytes.length] = 0;
+    if (vstep || countClock) self.__nyraVClock = { on: !!vstep, t: 1e12, step: vstep || 0, calls: 0 };
     let out;
     if (type === "analyze" && ex.nyra_analyze_fast) {  // phân tích nhanh: biết nước đã đi để bỏ qua việc tìm "nước tốt thứ hai" khi không cần
       let pp = 0;
@@ -102,7 +104,9 @@ self.onmessage = async (e) => {
     }
     const json = readCString(out);
     ex.nyra_free(p);
-    self.postMessage({ id, result: JSON.parse(json), threads: threadCount });
+    const result = JSON.parse(json);
+    if (self.__nyraVClock) { if (countClock) result.clk = self.__nyraVClock.calls; self.__nyraVClock = null; }
+    self.postMessage({ id, result, threads: threadCount });
   } catch (err) {
     self.postMessage({ id, error: String(err) });
   }

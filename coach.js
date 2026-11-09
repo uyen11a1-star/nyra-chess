@@ -8,48 +8,82 @@ const NAME = {
 const BAD = ["inaccuracy", "mistake", "blunder"];
 const MOOD = { brilliant: "wow", great: "wow", best: "happy", excellent: "happy", good: "happy", book: "idle", inaccuracy: "think", mistake: "sad", blunder: "sad" };
 
-// ---------- đọc thế cờ ----------
+// ---------- đọc thế cờ (mọi kết luận dựa trên nước đi hợp lệ của chess.js hoặc đường đi chính của engine) ----------
+const VK = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 100 };
+const MATE = 10000;
+const matDiff = (c, color) => {
+  let me = 0, op = 0;
+  for (const row of c.board()) for (const q of row) if (q) { if (q.color === color) me += VAL[q.type]; else op += VAL[q.type]; }
+  return me - op;
+};
+// Chuỗi bắt quân trên ô `to` (bên đang đi bắt bằng quân rẻ nhất trước, được quyền dừng) → lợi tối đa >= 0
+function exch(c, to, depth) {
+  if (depth > 12) return 0;
+  const caps = c.moves({ verbose: true }).filter((m) => m.to === to && m.captured && !m.promotion);
+  if (!caps.length) return 0;
+  caps.sort((x, y) => VK[x.piece] - VK[y.piece]);
+  const m = caps[0];
+  c.move(m);
+  const g = VAL[m.captured] - exch(c, to, depth + 1);
+  c.undo();
+  return Math.max(0, g);
+}
+// Mô phỏng đường đi chính; cắt ở chỗ hai bên đã bắt/đổi xong (tránh kết luận giữa chừng một cuộc đổi quân)
+function pvInfo(Chess, fen, pv, mover) {
+  if (!pv || !pv.length) return null;
+  try {
+    const c = new Chess(fen);
+    const startsMover = c.turn() === mover;
+    let k = Math.min(pv.length, 6);
+    if (startsMover ? k % 2 === 0 : k % 2 === 1) k--;
+    if (k < 1) return null;
+    const base = matDiff(c, mover);
+    let fin = 0, firstSan = "", mate = false;
+    const victims = [];
+    for (let i = 0; i < k; i++) {
+      const u = pv[i];
+      const m = c.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] });
+      if (!m) return null;
+      if (i === 0) firstSan = m.san;
+      if (m.captured && m.color !== mover) victims.push(m.captured);
+      fin = matDiff(c, mover) - base;
+    }
+    mate = c.isCheckmate();
+    return { fin, firstSan, victims, mate };
+  } catch (e) { return null; }
+}
+
 function analyzeMove(Chess, fen, uci) {
   const c = new Chess(fen);
   const from = uci.slice(0, 2), to = uci.slice(2, 4), promotion = uci[4];
   let mv;
   try { mv = c.move({ from, to, promotion }); } catch (e) { return null; }
   if (!mv) return null;
-  const me = mv.color, opp = me === "w" ? "b" : "w";
+  const me = mv.color;
+  const ep = mv.flags.includes("e");
   const f = {
     piece: mv.piece, from, to, me, cap: mv.captured || null, promo: mv.promotion || null,
+    capSq: ep ? to[0] + from[1] : to,
     ks: mv.flags.includes("k"), qs: mv.flags.includes("q"),
-    check: c.isCheck(), mate: c.isCheckmate(),
+    check: c.isCheck(), mate: c.isCheckmate(), fenAfter: c.fen(),
   };
-  f.capFree = !!f.cap && c.attackers(to, opp).length === 0;
+  f.capFree = !!f.cap && !c.moves({ verbose: true }).some((m) => m.to === to && m.captured);
   f.develop = (mv.piece === "n" || mv.piece === "b") && from[1] === (me === "w" ? "1" : "8");
   f.center = mv.piece === "p" && ["e4", "d4", "e5", "d5"].includes(to);
   if (c.isGameOver()) return f;
-  // quân vừa đi có bị bỏ hở không
-  if (mv.piece !== "k") {
-    const A = c.attackers(to, opp);
-    if (A.length) {
-      const D = c.attackers(to, me);
-      const minA = Math.min(...A.map((s) => ATT[c.get(s).type] || 99));
-      const pv = VAL[mv.piece];
-      if ((D.length === 0 && pv >= 1) || (D.length > 0 && minA < pv && pv >= 3)) {
-        const s = A.find((q) => (ATT[c.get(q).type] || 99) === minA);
-        f.hang = { att: c.get(s).type, undef: D.length === 0 };
-      }
-    }
-  }
-  // quân nào của mình có thể bị ăn lời nhất
+  // đối thủ (đang tới lượt) có nước bắt lời nhất / chiếu hết ngay không — chỉ tính nước hợp lệ, có xét chuỗi bắt lại
   let best = null;
   for (const m of c.moves({ verbose: true })) {
-    const c2 = new Chess(c.fen());
-    try { c2.move({ from: m.from, to: m.to, promotion: m.promotion }); } catch (e) { continue; }
-    if (c2.isCheckmate()) f.mateIn1 = m.san;
-    if (!m.captured) continue;
-    const rec = c2.attackers(m.to, me).length > 0;
-    const net = VAL[m.captured] - (rec ? ATT[m.piece] === 50 ? 0 : VAL[m.piece] : 0);
-    if (!best || net > best.net) best = { net, cap: m.captured, sq: m.to, by: m.piece };
+    c.move(m);
+    if (c.isCheckmate()) f.mateIn1 = m.san;
+    if (m.captured && !m.promotion) {
+      const rec = c.moves({ verbose: true }).some((r) => r.to === m.to && r.captured && !r.promotion);
+      const net = VAL[m.captured] - exch(c, m.to, 0);
+      if (!best || net > best.net) best = { net, cap: m.captured, sq: m.flags.includes("e") ? m.to[0] + m.from[1] : m.to, by: m.piece, undef: !rec };
+    }
+    c.undo();
   }
-  if (best && best.net >= 2) f.threat = best;
+  if (best && best.net >= 2) { f.threat = best; if (best.sq === to) f.hang = best; }
   return f;
 }
 
@@ -68,10 +102,10 @@ const L = {
       blunder: [(d) => `Úi, ${d.san} là sai lầm nặng!`, (d) => `${d.san} — nước này trả giá đắt đó.`, (d) => `Khoan đã, ${d.san} làm hỏng cả thế cờ!`, (d) => `Trời ơi ${d.san}, ván cờ ai chẳng có lúc lỡ tay.`, (d) => `${d.san} là bước ngoặt xấu rồi.`, (d) => `Ôi không, ${d.san}...`],
     },
     mate: [(d) => `Chiếu hết luôn, ván cờ kết thúc!`, (d) => `Vua không còn đường thoát — chiếu hết!`, (d) => `${d.P} chiếu hết, gọn gàng!`],
-    sac: [(d) => `Hy sinh ${d.P} để lấy thế tốt hơn, can đảm thật.`, (d) => `Dâng ${d.P} mà vẫn có lợi, tính toán sâu đó.`, (d) => `Bỏ ${d.P} nhưng bù lại bằng thế trận.`],
+    sac: [(d) => `Giving up material for a better position, bold.`, (d) => `A sacrifice that still works, deep calculation.`, (d) => `Accepting a material loss for a stronger position.`],
     promo: [(d) => `Tốt lên hàng cuối, phong thành ${d.PR}!`, (d) => `Phong cấp thành ${d.PR}, lực lượng mạnh thêm hẳn.`, (d) => `Có thêm ${d.PR} rồi, mạnh lên nhiều.`],
-    cap: [(d) => `${d.P} ăn ${d.C} ở ${d.To}.`, (d) => `Thu về ${d.C} ở ${d.To} bằng ${d.P}.`, (d) => `${d.P} bắt ${d.C} tại ${d.To}.`],
-    capFree: [(d) => `${d.P} ăn ${d.C} ở ${d.To} mà không bị ăn lại, lời trọn.`, (d) => `Ăn ${d.C} miễn phí tại ${d.To}.`, (d) => `${d.C} ở ${d.To} không ai bảo vệ nên bị ăn gọn.`],
+    cap: [(d) => `${d.P} ăn ${d.C} ở ${d.CS}.`, (d) => `Thu về ${d.C} ở ${d.CS} bằng ${d.P}.`, (d) => `${d.P} bắt ${d.C} tại ${d.CS}.`],
+    capFree: [(d) => `${d.P} ăn ${d.C} ở ${d.CS} mà không bị ăn lại, lời trọn.`, (d) => `Ăn ${d.C} miễn phí tại ${d.CS}.`, (d) => `${d.C} ở ${d.CS} không ai bảo vệ nên bị ăn gọn.`],
     check: [(d) => `Chiếu! ${d.P} làm đối thủ phải lo cho Vua.`, (d) => `${d.P} chiếu vua, đối thủ phải trả lời ngay.`, (d) => `Chiếu từ ${d.To}, giữ thế chủ động.`, (d) => `Có chiếu nên đối thủ khó rảnh tay.`],
     castle: [(d) => `Nhập thành đưa Vua về chỗ an toàn và kích hoạt Xe.`, (d) => `Nhập thành — Vua yên vị, Xe vào cuộc.`, (d) => `Vua nhập thành, bớt lo nhiều thứ.`],
     develop: [(d) => `${d.P} vào trận, quân hoạt động tốt hơn hẳn.`, (d) => `Mang ${d.P} ra khỏi hàng cuối, hợp lý đó.`, (d) => `Đưa ${d.P} ra chơi, quân đang hoạt động hơn.`, (d) => `${d.P} rời hàng cuối để vào trận.`, (d) => `Phát triển ${d.P} sớm là ý hay.`],
@@ -79,7 +113,7 @@ const L = {
     quiet: [(d) => `Thế cờ chắc, không có gì phải lo.`, (d) => `Một nước đi điềm tĩnh, đúng kiểu cờ vị trí.`, (d) => `Thế cờ vẫn chắc chắn.`, (d) => `Không có gì lớn, nhưng nước đi hợp lý.`, (d) => `Giữ thế trận gọn gàng.`, (d) => `${d.P} đi ${d.To} là lựa chọn hợp lý.`],
     book: [(d) => `Nhiều ván đấu đã đi theo hướng này.`, (d) => `Đây là đường quen thuộc của lý thuyết.`, (d) => `Cứ đi theo sách là an toàn.`],
     hang: [(d) => `${d.P} ở ${d.To} đang bị ${d.A} đe dọa${d.U ? " mà không ai bảo vệ" : ""}.`, (d) => `${d.A} có thể ăn ${d.P} tại ${d.To}${d.U ? ", và không có quân nào đỡ" : ""}.`, (d) => `Đi ${d.To} xong ${d.P} thành mục tiêu của ${d.A}${d.U ? " mà chẳng ai che" : ""}.`],
-    threat: [(d) => `${d.C} ở ${d.TS} vẫn có thể bị ${d.TA} ăn.`, (d) => `Chưa lo cho ${d.C} ở ${d.TS}, ${d.TA} bắt được đó.`, (d) => `${d.C} ở ${d.TS} đang hở, ${d.TA} có thể ăn.`],
+    threat: [(d) => `${d.VC} ở ${d.TS} có thể bị ${d.TA} ăn lời.`, (d) => `Chưa lo cho ${d.VC} ở ${d.TS}, ${d.TA} bắt được đó.`, (d) => `${d.VC} ở ${d.TS} đang hở, ${d.TA} có thể ăn.`],
     quietBad: [(d) => `Nước này làm thế cờ xấu đi chút.`, (d) => `Đối thủ được thế tốt hơn sau nước này.`, (d) => `Thế cờ kém đi so với nước đúng.`],
     bMate: [(d) => `Có chiếu hết đó: ${d.best}.`, (d) => `${d.best} chiếu hết luôn, bỏ lỡ tiếc quá!`, (d) => `Nước thắng ngay là ${d.best}.`],
     bCapFree: [(d) => `${d.best} ăn ${d.BC} mà không mất gì.`, (d) => `Lẽ ra ${d.best}, lấy ${d.BC} miễn phí.`, (d) => `${d.BC} đang bị bỏ hở, ${d.best} ăn được ngay.`],
@@ -103,9 +137,15 @@ const L = {
       neu: ["Ừm,", "Để xem nào...", "Okay,", "Hmm,", "Cũng được,", "À,", "Nhìn qua thì", "Ừ,"],
       neg: ["Ối!", "Tiếc quá!", "Úi!", "Hừm...", "Khoan đã!", "Ôi không!", "Chà...", "Eo ơi,"],
     },
+    pvLossP: [(d) => `Đối thủ đáp ${d.S1} và ${d.side} hụt khoảng ${d.LN} điểm quân.`, (d) => `Sau ${d.S1} của đối thủ, ${d.side} mất khoảng ${d.LN} điểm quân.`, (d) => `Theo tính toán của Nyra, ${d.S1} khiến ${d.side} thiệt khoảng ${d.LN} điểm quân.`],
+    pvLossV: [(d) => `Đối thủ đáp ${d.S1} và ${d.side} mất ${d.LV}.`, (d) => `Sau ${d.S1} của đối thủ, ${d.LV} của ${d.side} khó giữ.`, (d) => `Theo tính toán của Nyra, ${d.S1} sẽ lấy được ${d.LV}.`],
+    pvMate: [(d) => `Đối thủ đáp ${d.S1} và dẫn tới chiếu hết.`, (d) => `Sau ${d.S1} của đối thủ, ${d.side} bị chiếu hết.`, (d) => `Nyra thấy ${d.S1} dẫn tới chiếu hết.`],
+    mateLine: [(d) => `Nyra thấy đối thủ có đường chiếu hết bắt buộc.`, (d) => `Ván cờ đang trượt vào đường chiếu hết.`, (d) => `Đối thủ có đường chiếu hết, rất nguy hiểm.`],
+    bWin: [(d) => `${d.best} thắng khoảng ${d.GN} điểm quân.`, (d) => `Theo Nyra, ${d.best} lời khoảng ${d.GN} điểm quân.`, (d) => `${d.best} giúp ${d.side} hơn khoảng ${d.GN} điểm quân.`],
+    bMateLine: [(d) => `Nyra thấy đường chiếu hết bắt đầu bằng ${d.best}.`, (d) => `${d.best} mở đường chiếu hết.`, (d) => `Lẽ ra ${d.best}, có đường chiếu hết.`],
     mateThreat: [(d) => `Đối thủ có thể chiếu hết ngay bằng ${d.MS}!`, (d) => `Nguy hiểm! ${d.MS} sẽ là chiếu hết.`, (d) => `${d.MS} của đối thủ sẽ chiếu hết đó.`],
     quietMist: [(d) => `Thế cờ xấu đi nhiều sau nước này.`, (d) => `Đối thủ có cơ hội lớn sau nước này.`, (d) => `Nước này mở ra khó khăn lớn cho ${d.side}.`],
-    capBad: [(d) => `Ăn ${d.C} ở ${d.To} trông hấp dẫn, nhưng còn nước hay hơn.`, (d) => `${d.P} ăn ${d.C} nghe ngon, tiếc là chưa phải hay nhất.`, (d) => `Thu ${d.C} ở ${d.To} thì được, nhưng thế cờ lại kém đi.`],
+    capBad: [(d) => `Ăn ${d.C} ở ${d.CS} trông hấp dẫn, nhưng còn nước hay hơn.`, (d) => `${d.P} ăn ${d.C} nghe ngon, tiếc là chưa phải hay nhất.`, (d) => `Thu ${d.C} ở ${d.CS} thì được, nhưng thế cờ lại kém đi.`],
     side: { w: "Trắng", b: "Đen" },
   },
   en: {
@@ -123,8 +163,8 @@ const L = {
     mate: [(d) => `Checkmate, game over!`, (d) => `No escape for the king — checkmate!`, (d) => `${d.P} delivers mate, clean!`],
     sac: [(d) => `Sacrificing the ${d.P} for a better position, bold.`, (d) => `Giving up the ${d.P} but it pays off, deep calculation.`, (d) => `The ${d.P} goes, but the position makes up for it.`],
     promo: [(d) => `Pawn reaches the end and becomes a ${d.PR}!`, (d) => `Promoting to a ${d.PR}, much stronger now.`, (d) => `A new ${d.PR} on the board.`],
-    cap: [(d) => `${d.P} takes the ${d.C} on ${d.To}.`, (d) => `Collects the ${d.C} on ${d.To} with the ${d.P}.`, (d) => `${d.P} captures the ${d.C} at ${d.To}.`],
-    capFree: [(d) => `${d.P} takes the ${d.C} on ${d.To} with no recapture, free material.`, (d) => `A free ${d.C} on ${d.To}.`, (d) => `The ${d.C} on ${d.To} was unprotected, so it falls.`],
+    cap: [(d) => `${d.P} takes the ${d.C} on ${d.CS}.`, (d) => `Collects the ${d.C} on ${d.CS} with the ${d.P}.`, (d) => `${d.P} captures the ${d.C} at ${d.CS}.`],
+    capFree: [(d) => `${d.P} takes the ${d.C} on ${d.CS} with no recapture, free material.`, (d) => `A free ${d.C} on ${d.CS}.`, (d) => `The ${d.C} on ${d.CS} was unprotected, so it falls.`],
     check: [(d) => `Check! The ${d.P} makes the opponent worry about the king.`, (d) => `${d.P} gives check, the opponent must respond.`, (d) => `Check from ${d.To}, keeping the initiative.`, (d) => `With check, the opponent has no spare time.`],
     castle: [(d) => `Castling tucks the king away and activates the rook.`, (d) => `Castled — king safe, rook in play.`, (d) => `King castles, one less worry.`],
     develop: [(d) => `The ${d.P} enters the game, pieces get busier.`, (d) => `Bringing the ${d.P} off the back rank, sensible.`, (d) => `Developing the ${d.P}, pieces get more active.`, (d) => `The ${d.P} leaves the back rank to join the game.`, (d) => `Early development of the ${d.P}, nice idea.`],
@@ -132,7 +172,7 @@ const L = {
     quiet: [(d) => `Solid position, nothing to worry about.`, (d) => `A calm move, very positional.`, (d) => `The position stays solid.`, (d) => `Nothing flashy, but a sensible move.`, (d) => `Keeps the setup tidy.`, (d) => `${d.P} to ${d.To} is a reasonable choice.`],
     book: [(d) => `Many games have followed this path.`, (d) => `A well-known line of theory.`, (d) => `Following the book is safe.`],
     hang: [(d) => `The ${d.P} on ${d.To} is attacked by a ${d.A}${d.U ? " and nothing protects it" : ""}.`, (d) => `A ${d.A} can take the ${d.P} on ${d.To}${d.U ? ", and it has no defender" : ""}.`, (d) => `After ${d.To}, the ${d.P} becomes a target for the ${d.A}${d.U ? " with no cover" : ""}.`],
-    threat: [(d) => `The ${d.C} on ${d.TS} can still be taken by a ${d.TA}.`, (d) => `Nobody looked after the ${d.C} on ${d.TS}, a ${d.TA} can grab it.`, (d) => `The ${d.C} on ${d.TS} is loose, a ${d.TA} can capture it.`],
+    threat: [(d) => `The ${d.VC} on ${d.TS} can be won by a ${d.TA}.`, (d) => `Nobody looked after the ${d.VC} on ${d.TS}, a ${d.TA} can grab it.`, (d) => `The ${d.VC} on ${d.TS} is loose, a ${d.TA} can capture it.`],
     quietBad: [(d) => `This makes the position a bit worse.`, (d) => `The opponent gets the better position after this.`, (d) => `The position is worse than after the right move.`],
     bMate: [(d) => `There was a checkmate: ${d.best}.`, (d) => `${d.best} was mate, such a pity to miss!`, (d) => `The winning move was ${d.best}.`],
     bCapFree: [(d) => `${d.best} wins the ${d.BC} for nothing.`, (d) => `${d.best} was available, a free ${d.BC}.`, (d) => `The ${d.BC} was hanging, ${d.best} takes it right away.`],
@@ -156,24 +196,25 @@ const L = {
       neu: ["Hmm,", "Let's see...", "Okay,", "Well,", "Alright,", "I see,", "At a glance,", "So,"],
       neg: ["Oops!", "Too bad!", "Yikes!", "Hmm...", "Hold on!", "Oh no!", "Ouch...", "Eek,"],
     },
+    pvLossP: [(d) => `The opponent replies ${d.S1} and ${d.side} drops about ${d.LN} points of material.`, (d) => `After ${d.S1}, ${d.side} loses about ${d.LN} points of material.`, (d) => `By Nyra's calculation, ${d.S1} costs ${d.side} about ${d.LN} points.`],
+    pvLossV: [(d) => `The opponent replies ${d.S1} and ${d.side} loses the ${d.LV}.`, (d) => `After ${d.S1}, the ${d.LV} is hard to keep.`, (d) => `By Nyra's calculation, ${d.S1} wins the ${d.LV}.`],
+    pvMate: [(d) => `The opponent replies ${d.S1} and it leads to checkmate.`, (d) => `After ${d.S1}, ${d.side} gets mated.`, (d) => `Nyra sees ${d.S1} leading to mate.`],
+    mateLine: [(d) => `Nyra sees a forced mate for the opponent.`, (d) => `The game is sliding into a mating line.`, (d) => `The opponent has a mating line, very dangerous.`],
+    bWin: [(d) => `${d.best} wins about ${d.GN} points of material.`, (d) => `According to Nyra, ${d.best} gains about ${d.GN} points.`, (d) => `${d.best} leaves ${d.side} about ${d.GN} points up.`],
+    bMateLine: [(d) => `Nyra sees a mating line starting with ${d.best}.`, (d) => `${d.best} opens the way to checkmate.`, (d) => `${d.best} was the move, there was a mating line.`],
     mateThreat: [(d) => `The opponent can deliver mate with ${d.MS}!`, (d) => `Danger! ${d.MS} would be checkmate.`, (d) => `${d.MS} from the opponent would be mate.`],
     quietMist: [(d) => `The position gets much worse after this.`, (d) => `The opponent gets a big chance after this move.`, (d) => `This opens up serious trouble for ${d.side}.`],
-    capBad: [(d) => `Taking the ${d.C} on ${d.To} looks tempting, but there was better.`, (d) => `${d.P} takes ${d.C}, sounds good, just not the best.`, (d) => `Winning the ${d.C} on ${d.To} is fine, but the position gets worse.`],
+    capBad: [(d) => `Taking the ${d.C} on ${d.CS} looks tempting, but there was better.`, (d) => `${d.P} takes ${d.C}, sounds good, just not the best.`, (d) => `Winning the ${d.C} on ${d.CS} is fine, but the position gets worse.`],
     side: { w: "White", b: "Black" },
   },
 };
 
 // ---------- chọn câu, chống trùng ----------
-const usedIdx = new Map();
-function pick(lang, id, arr) {
-  const key = lang + ":" + id;
-  let s = usedIdx.get(key);
-  if (!s || s.size >= arr.length) { s = new Set(); usedIdx.set(key, s); }
-  const free = arr.map((_, i) => i).filter((i) => !s.has(i));
-  const i = free[Math.floor(Math.random() * free.length)];
-  s.add(i);
-  return arr[i];
-}
+// Cố định: cùng một nước ở cùng vị trí trong ván luôn ra cùng một câu; các nước liền nhau dùng biến thể khác nhau (bước nhảy 7 nguyên tố cùng nhau với độ dài từng nhóm câu)
+const SEED = { ply: 0, salt: 0 };
+function hashStr(t) { let h = 5381; for (let i = 0; i < t.length; i++) h = ((h << 5) + h + t.charCodeAt(i)) >>> 0; return h; }
+function pick(lang, id, arr) { return arr[(SEED.ply * 7 + SEED.salt * 3 + hashStr(id)) % arr.length]; }
+function chance(p, tag) { return (hashStr(tag) + SEED.ply * 131 + SEED.salt * 17) % 100 < p * 100; }
 const cache = new WeakMap();
 const IDLE = { vi: "Chọn một nước đi để Nyro nhận xét nha!", en: "Pick a move and Nyro will comment!" };
 
@@ -183,6 +224,8 @@ function evBucket(wp) {
 
 // ctx: { Chess, fen (thế cờ trước nước đi), lang, evals (win% của Trắng sau mỗi nước) }
 function buildLine(rv, ply, ctx) {
+  SEED.ply = Number.isFinite(ctx.plyReal) ? ctx.plyReal : ply;
+  SEED.salt = ctx.salt || 0;
   const lang = ctx.lang === "en" ? "en" : "vi";
   const T = L[lang], N = NAME[lang];
   const say = (id, pool, d) => pick(lang, id, pool)(d);
@@ -193,16 +236,21 @@ function buildLine(rv, ply, ctx) {
     if (bad && rv.bestUci && rv.bestUci !== rv.uci) { try { b = analyzeMove(ctx.Chess, ctx.fen, rv.bestUci); } catch (e) { b = null; } }
   }
   const d = { san: rv.san, side: T.side[rv.side] || "", best: rv.bestSan, loss: Math.round(rv.loss || 0) };
+  const realPly = Number.isFinite(ctx.plyReal) ? ctx.plyReal : ply;
+  let pa = null, pb = null;
   if (f) {
-    Object.assign(d, { P: N[f.piece], To: f.to, C: f.cap ? N[f.cap] : "", PR: f.promo ? N[f.promo] : "" });
-    if (f.hang) Object.assign(d, { A: N[f.hang.att], U: f.hang.undef });
-    if (f.threat) Object.assign(d, { C: N[f.threat.cap], TS: f.threat.sq, TA: N[f.threat.by] });
+    Object.assign(d, { P: N[f.piece], To: f.to, CS: f.capSq, C: f.cap ? N[f.cap] : "", PR: f.promo ? N[f.promo] : "" });
+    if (f.hang) Object.assign(d, { A: N[f.hang.by], U: f.hang.undef });
+    if (f.threat) Object.assign(d, { VC: N[f.threat.cap], TS: f.threat.sq, TA: N[f.threat.by] });
     if (f.mateIn1) d.MS = f.mateIn1;
+    pa = pvInfo(ctx.Chess, f.fenAfter, rv.pvAfter, rv.side);
+    if (pa) d.S1 = pa.firstSan;
+    pb = bad ? pvInfo(ctx.Chess, ctx.fen, rv.pvBest, rv.side) : null;
   }
   if (b) Object.assign(d, { BC: b.cap ? N[b.cap] : "" });
 
   let h = say("head." + rv.cls, T.head[rv.cls] || T.head.good, d);
-  if (h.startsWith(rv.san) && Math.random() < 0.6) {
+  if (h.startsWith(rv.san) && chance(0.6, "ij")) {
     const g = ["brilliant", "great", "best", "excellent"].includes(rv.cls) ? "pos" : ["mistake", "blunder"].includes(rv.cls) ? "neg" : "neu";
     h = pick(lang, "ij." + g, T.ij[g]) + " " + h;
   }
@@ -217,8 +265,8 @@ function buildLine(rv, ply, ctx) {
       if (f.cap) c.push([f.capFree ? "capFree" : "cap", f.capFree ? T.capFree : T.cap]);
       if (f.check) c.push(["check", T.check]);
       if (f.ks || f.qs) c.push(["castle", T.castle]);
-      if (f.develop) c.push(["develop", T.develop]);
-      if (f.center) c.push(["center", T.center]);
+      if (f.develop && realPly < 24) c.push(["develop", T.develop]);
+      if (f.center && realPly < 40) c.push(["center", T.center]);
     }
     if (rv.cls === "book") c.push(["bookd", T.book]);
     if (!c.length) c.push(["quiet", T.quiet]);
@@ -226,20 +274,31 @@ function buildLine(rv, ply, ctx) {
     // lấy ngẫu nhiên n mục khác nhau trong danh sách ưu tiên (2 mục đầu có trọng số cao hơn)
     const chosen = c.slice(0, Math.max(n, 1) + (c.length > 2 ? 1 : 0));
     for (let i = 0; i < n && chosen.length; i++) {
-      const k = Math.floor(Math.random() * chosen.length);
+      const k = (SEED.ply + i * 5 + SEED.salt) % chosen.length;
       const [id, pool] = chosen.splice(k, 1)[0];
       parts.push(say(id, pool, d));
     }
   } else {
+    // ưu tiên: chiếu hết ngay (chính xác) > kết luận của engine (đường đi chính) > suy ra từ nước đi hợp lệ (chỉ khi engine không nói ngược lại)
+    const engineMate = typeof rv.afterCp === "number" && rv.afterCp <= -MATE;
+    const pvLoss = pa && pa.fin <= -2 ? -pa.fin : 0;
+    let victim = null;
+    if (pvLoss) for (const v of pa.victims) if (VAL[v] >= pvLoss && (!victim || VAL[v] > VAL[victim])) victim = v;
     if (f && f.mateIn1) parts.push(say("mateThreat", T.mateThreat, d));
-    else if (f && f.hang) parts.push(say("hang", T.hang, d));
-    else if (f && f.threat) parts.push(say("threat", T.threat, d));
+    else if (engineMate && pa && pa.mate) parts.push(say("pvMate", T.pvMate, d));
+    else if (engineMate) parts.push(say("mateLine", T.mateLine, d));
+    else if (pvLoss && victim) { d.LV = N[victim]; parts.push(say("pvLossV", T.pvLossV, d)); }
+    else if (pvLoss) { d.LN = pvLoss; parts.push(say("pvLossP", T.pvLossP, d)); }
+    else if (!pa && f && f.hang) parts.push(say("hang", T.hang, d));
+    else if (!pa && f && f.threat) parts.push(say("threat", T.threat, d));
     else if (f && f.cap) parts.push(say("capBad", T.capBad, d));
     else if (rv.cls === "inaccuracy") parts.push(say("quietBad", T.quietBad, d));
     else parts.push(say("quietMist", T.quietMist, d));
     if (rv.bestSan && rv.bestUci !== rv.uci) {
       let id = "bAny", pool = T.bAny;
-      if (b) {
+      if (typeof rv.bestCp === "number" && rv.bestCp >= MATE && !(b && b.mate)) { id = "bMateLine"; pool = T.bMateLine; }
+      else if (pb && pb.fin >= 2 && !(b && b.mate)) { d.GN = pb.fin; id = "bWin"; pool = T.bWin; }
+      else if (b) {
         if (b.mate) { id = "bMate"; pool = T.bMate; }
         else if (b.cap && b.capFree) { id = "bCapFree"; pool = T.bCapFree; }
         else if (b.cap) { id = "bCap"; pool = T.bCap; }
@@ -259,12 +318,12 @@ function buildLine(rv, ply, ctx) {
     const wa = sgn === 1 ? ev[ply + 1] : 100 - ev[ply + 1];
     if (bad && wb >= 60 && wa < 45) tail = ["ev.drop", T.ev.drop];
     else if (!bad && wb <= 35 && wa >= 50) tail = ["ev.comeback", T.ev.comeback];
-    else if (bad && Math.random() < 0.7) { const k = evBucket(wa); tail = ["ev." + k, T.ev[k]]; }
-    else if (!bad && (wa >= 85 || wa <= 15) && Math.random() < 0.5) { const k = evBucket(wa); tail = ["ev." + k, T.ev[k]]; }
-    else if (!bad && Math.random() < 0.25) { const k = evBucket(wa); tail = ["ev." + k, T.ev[k]]; }
+    else if (bad && chance(0.7, "evb")) { const k = evBucket(wa); tail = ["ev." + k, T.ev[k]]; }
+    else if (!bad && (wa >= 85 || wa <= 15) && chance(0.5, "evx")) { const k = evBucket(wa); tail = ["ev." + k, T.ev[k]]; }
+    else if (!bad && chance(0.25, "evn")) { const k = evBucket(wa); tail = ["ev." + k, T.ev[k]]; }
   }
   if (tail) parts.push(say(tail[0], tail[1], d));
-  else if (bad && d.loss >= 8 && Math.random() < 0.5) parts.push(say("loss", T.loss, d));
+  else if (bad && d.loss >= 8 && chance(0.5, "loss")) parts.push(say("loss", T.loss, d));
 
   let mood = MOOD[rv.cls] || "idle";
   if (f && f.mate) mood = "wow";
@@ -272,15 +331,13 @@ function buildLine(rv, ply, ctx) {
   return out;
 }
 
-const seenText = new Set();
 export function coachLine(rv, ply, ctx = {}) {
   const lang = ctx.lang === "en" ? "en" : "vi";
   if (!rv) return { mood: "idle", text: IDLE[lang] };
-  if (cache.has(rv)) return cache.get(rv);
-  let out;
-  for (let i = 0; i < 8; i++) { out = buildLine(rv, ply, ctx); if (!seenText.has(lang + out.text)) break; }
-  seenText.add(lang + out.text);
-  cache.set(rv, out);
+  const hit = cache.get(rv);
+  if (hit && hit.lang === lang) return hit.out;
+  const out = buildLine(rv, ply, ctx);
+  cache.set(rv, { lang, out });
   return out;
 }
 
@@ -292,8 +349,8 @@ const TRYHINT = {
   vi: ["Tới lượt bạn! Chạm vào quân rồi chạm ô đích để thử một nước.", "Thử một nước khác xem, Nyro sẽ chấm điểm ngay!", "Bạn sẽ đi nước nào? Nyro chờ nè.", "Đây là thế cờ lúc đó, thử tìm nước hay hơn đi!", "Thoải mái thử nha, đi sai cũng không sao đâu."],
   en: ["Your turn! Tap a piece, then tap a square to try a move.", "Try another move and Nyro will rate it right away!", "Which move will you play? Nyro is waiting.", "This is the position back then, try to find something better!", "Feel free to experiment, a wrong move costs nothing."],
 };
-export const coachThinking = (lang) => pick(lang === "en" ? "en" : "vi", "think", THINK[lang === "en" ? "en" : "vi"].map((t) => () => t))();
-export const coachTryHint = (lang) => pick(lang === "en" ? "en" : "vi", "tryhint", TRYHINT[lang === "en" ? "en" : "vi"].map((t) => () => t))();
+export const coachThinking = (lang, k = 0) => { const a = THINK[lang === "en" ? "en" : "vi"]; return a[k % a.length]; };
+export const coachTryHint = (lang, k = 0) => { const a = TRYHINT[lang === "en" ? "en" : "vi"]; return a[k % a.length]; };
 
 export function buildCoach() {
   const el = document.createElement("div");
@@ -310,3 +367,4 @@ export function setCoach(el, { mood, text }) {
   el.querySelector(".nyro-bubble").textContent = text;
   el.dataset.mood = mood;
 }
+export const _test = { analyzeMove, pvInfo, exch };

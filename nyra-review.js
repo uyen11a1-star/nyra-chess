@@ -111,7 +111,7 @@ export function makeAnalyzer(nWorkers = pickWorkers()) {
   let id = 0;
   const pend = new Map();
   for (let k = 0; k < nWorkers; k++) {
-    const w = new Worker("nyra-worker.js?v=5#st");
+    const w = new Worker("nyra-worker.js?v=7#st");
     w.onmessage = (e) => {
       const p = pend.get(e.data.id);
       if (!p) return;
@@ -121,7 +121,7 @@ export function makeAnalyzer(nWorkers = pickWorkers()) {
     w.onerror = () => { for (const [, p] of pend) p.rej(new Error("Worker lỗi")); pend.clear(); };
     ws.push(w);
   }
-  const send = (w, fen, timeMs, played) => new Promise((res, rej) => { const i = ++id; pend.set(i, { res, rej }); w.postMessage({ id: i, fen, timeMs, type: "analyze", played: played || "" }); });
+  const send = (w, fen, timeMs, played) => new Promise((res, rej) => { const i = ++id; pend.set(i, { res, rej }); w.postMessage({ id: i, fen, timeMs, type: "analyze", played: played || "", reset: true, vstep: VSTEP }); });
   return {
     analyze: (fen, timeMs, played) => send(ws[0], fen, timeMs, played),
     // items: [{fen, timeMs, played}] -> kết quả theo đúng thứ tự. Chia thành các đoạn liên tiếp cho từng worker để bảng băm dùng lại được giữa thế cờ kề nhau.
@@ -142,9 +142,44 @@ export function makeAnalyzer(nWorkers = pickWorkers()) {
 }
 
 // moves: [{from,to,promotion}]. Trả về { moves, summary, evals }
-const DEF_REFINE = 6, DEF_REFINE_X = 2.5;
+const DEF_REFINE = 12, DEF_REFINE_X = 2.5;
+export const REVIEW_TIME_MS = 400;  // đủ thời gian để kết quả ổn định (đã đo: lặp lại cho kết quả y hệt)
+const REVIEW_VER = "r4";
+// Đồng hồ ảo: mỗi lần engine hỏi giờ nhích 1,3ms -> giới hạn thời gian thành giới hạn số nút tìm kiếm, kết quả y hệt ở mọi máy và mọi lần chạy
+const VSTEP = 1.3e6;
 
-export async function reviewGame(moves, { Chess, timeMs = 150, maxRefine = DEF_REFINE, refineX = DEF_REFINE_X, onProgress, analyzer } = {}) {
+// Bộ nhớ kết quả: cùng một ván (cùng dãy nước + cùng thông số) luôn trả về đúng kết quả đã tính, không tính lại
+const CACHE_KEY = "nyra_review_cache_v4", CACHE_MAX = 24;
+const memCache = new Map();
+function loadCache() { try { return JSON.parse(localStorage.getItem(CACHE_KEY) || "{}"); } catch (e) { return {}; } }
+function saveCache(key, data) {
+  memCache.set(key, data);
+  try {
+    const all = loadCache();
+    all[key] = { t: Date.now(), data };
+    const keys = Object.keys(all).sort((a, b) => all[b].t - all[a].t);
+    for (const k of keys.slice(CACHE_MAX)) delete all[k];
+    localStorage.setItem(CACHE_KEY, JSON.stringify(all));
+  } catch (e) { /* đầy bộ nhớ trình duyệt: bỏ qua, vẫn dùng bản trong RAM */ }
+}
+function readCache(key) {
+  if (memCache.has(key)) return memCache.get(key);
+  const e = loadCache()[key];
+  return e ? e.data : null;
+}
+function gameKey(moves, p) { return REVIEW_VER + "|" + p.join(",") + "|" + moves.map((m) => m.from + m.to + (m.promotion || "")).join(" "); }
+
+export async function reviewGame(moves, opts = {}) {
+  const { timeMs = REVIEW_TIME_MS, maxRefine = DEF_REFINE, refineX = DEF_REFINE_X, onProgress } = opts;
+  const key = gameKey(moves, [timeMs, maxRefine, refineX]);
+  const hit = readCache(key);
+  if (hit) { if (onProgress) onProgress(1, 1); return JSON.parse(JSON.stringify(hit)); }
+  const res = await reviewGameFresh(moves, { ...opts, timeMs, maxRefine, refineX });
+  saveCache(key, res);
+  return res;
+}
+
+async function reviewGameFresh(moves, { Chess, timeMs = REVIEW_TIME_MS, maxRefine = DEF_REFINE, refineX = DEF_REFINE_X, onProgress, analyzer } = {}) {
   const az = analyzer || makeAnalyzer();
   try {
     const chess = new Chess();
@@ -207,7 +242,8 @@ export async function reviewGame(moves, { Chess, timeMs = 150, maxRefine = DEF_R
         bestSan = c.move({ from: cur.best.slice(0, 2), to: cur.best.slice(2, 4), promotion: cur.best[4] }).san;
       } catch (e) {}
       return { ply: i, side, san: infos[i].san, uci: infos[i].uci, cls, loss, bestSan, sacrifice, sacCand,
-               bestUci: cur.best || "", acc: isBest ? 100 : moveAccuracy(loss) };
+               bestUci: cur.best || "", acc: isBest ? 100 : moveAccuracy(loss),
+               bestCp, afterCp, pvBest: cur.pv || null, pvAfter: nxt.over ? null : (nxt.pv || null) };
     };
     const out = [];
     for (let i = 0; i < n; i++) out.push(judge(i));
@@ -250,7 +286,15 @@ export async function reviewGame(moves, { Chess, timeMs = 150, maxRefine = DEF_R
 
 // Chấm MỘT nước tuỳ ý trong thế cờ `fen` (dùng cho chế độ "thử nước"): cùng cách phân loại với reviewGame.
 // Trả về { side, san, uci, cls, loss, bestSan, bestUci, sacrifice, wpBeforeWhite, wpAfterWhite, fenAfter }
-export async function judgeTry(Chess, fen, uci, { analyzer, timeMs = 300 } = {}) {
+const tryMem = new Map();
+export async function judgeTry(Chess, fen, uci, { analyzer, timeMs = REVIEW_TIME_MS } = {}) {
+  const tk = REVIEW_VER + "|" + timeMs + "|" + fen + "|" + uci;
+  if (tryMem.has(tk)) return { ...tryMem.get(tk) };
+  const out = await judgeTryFresh(Chess, fen, uci, { analyzer, timeMs });
+  tryMem.set(tk, out);
+  return { ...out };
+}
+async function judgeTryFresh(Chess, fen, uci, { analyzer, timeMs }) {
   const c = new Chess(fen);
   const side = c.turn();
   const mv = c.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] });
@@ -286,5 +330,6 @@ export async function judgeTry(Chess, fen, uci, { analyzer, timeMs = 300 } = {})
   } catch (e) {}
   const toWhite = (wp) => (side === "w" ? wp : 100 - wp);
   return { ply: 0, side, san: mv.san, uci, cls, loss, bestSan, bestUci: cur.best || "", sacrifice,
+           bestCp, afterCp, pvBest: cur.pv || null, pvAfter: nxt.over ? null : (nxt.pv || null),
            wpBeforeWhite: toWhite(wpBest), wpAfterWhite: toWhite(wpAfter), fenAfter };
 }

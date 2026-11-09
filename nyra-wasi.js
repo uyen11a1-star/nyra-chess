@@ -6,6 +6,13 @@ function nyraCreateWasi(getMemory) {
     environ_sizes_get(countPtr, sizePtr) { const d = view(); d.setUint32(countPtr, 0, true); d.setUint32(sizePtr, 0, true); return OK; },
     environ_get() { return OK; },
     clock_time_get(id, precision, timePtr) {
+      // Đồng hồ ảo (chỉ khi worker bật, dùng cho phân tích ván): mỗi lần engine hỏi giờ thì giờ nhích đúng một bước cố định,
+      // nên giới hạn thời gian thành giới hạn số nút tìm kiếm -> kết quả không còn phụ thuộc tốc độ máy hay tải CPU.
+      const vc = typeof self !== "undefined" ? self.__nyraVClock : null;
+      if (vc) {
+        vc.calls++;
+        if (vc.on) { vc.t += vc.step; view().setBigUint64(timePtr, BigInt(Math.floor(vc.t)), true); return OK; }
+      }
       const ms = id === 0 ? performance.timeOrigin + performance.now() : performance.now();
       view().setBigUint64(timePtr, BigInt(Math.floor(ms * 1e6)), true);
       return OK;

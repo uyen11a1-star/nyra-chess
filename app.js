@@ -1,6 +1,6 @@
 import { Chess } from "./vendor/chess.js?v=1";
 import { getNyraMove, hasLocalNyra } from "./nyra-client.js?v=5";
-import { reviewGame, CLASS_INFO, CLASS_ORDER, judgeTry, makeAnalyzer } from "./nyra-review.js?v=7";
+import { reviewGame, CLASS_INFO, CLASS_ORDER, judgeTry, makeAnalyzer, REVIEW_TIME_MS } from "./nyra-review.js?v=9";
 import { initArena } from "./arena.js?v=2";
 import { StockfishEngine, SF_LEVELS } from "./stockfish-client.js?v=2";
 import { initI18n, getLang } from "./i18n.js?v=5";
@@ -8,7 +8,7 @@ import { initSettings } from "./settings.js?v=5";
 import { initPuzzle } from "./puzzle.js?v=5";
 import { sfx } from "./sound.js?v=4";
 import { slideMove } from "./fx.js?v=1";
-import { coachLine, buildCoach, setCoach, coachThinking, coachTryHint } from "./coach.js?v=4";
+import { coachLine, buildCoach, setCoach, coachThinking, coachTryHint } from "./coach.js?v=5";
 
 const $ = (id) => document.getElementById(id);
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -565,7 +565,7 @@ async function runAutoReview() {
       })),
       {
         Chess,
-        timeMs: 150,
+        timeMs: REVIEW_TIME_MS,
         onProgress: (i, t) => {
           if (box) box.innerHTML =
             `<p class="rv-progress">Phân tích tự động… ${i}/${t}</p><div class="rv-bar"><div style="width:${(i / t * 100).toFixed(0)}%"></div></div>`;
@@ -890,7 +890,7 @@ function renderMarking(panel, ply) {
   const svg = panel._svg;
   if (svg) svg.innerHTML = "";
   const rv = currentReview ? currentReview.moves.find(m => m.ply === ply) : null;
-  setCoach(panel._coach, coachLine(rv, ply, { Chess, fen: positionAt(ply).fen(), lang: getLang(), evals: currentReview ? currentReview.evals : null }));
+  setCoach(panel._coach, coachLine(rv, ply, { Chess, fen: positionAt(ply).fen(), lang: getLang(), evals: currentReview ? currentReview.evals : null, plyReal: ply }));
   if (panel._info) {
     if (!rv) {
       panel._info.textContent = "Ván này chưa có phân tích của Nyra — bấm “Phân tích ván bằng Nyra”.";
@@ -996,10 +996,18 @@ async function tryPlay(panel, from, to) {
   renderTry(panel);
   setCoach(panel._coach, { mood: "think", text: coachThinking(getLang()) });
   try {
-    const rv = await judgeTry(Chess, t.fen, uci, { analyzer: getTryAz(), timeMs: 300 });
+    t.attempt = (t.attempt || 0) + 1;
+    // Nước trùng với nước đã đi trong ván thì dùng đúng kết quả của lượt phân tích ván (không tính lại, nên không bao giờ lệch)
+    const rev = currentReview && currentReview.moves.find((m) => m.ply === t.ply);
+    let rv;
+    if (rev && rev.uci === uci && currentReview.evals) {
+      rv = { ...rev, wpBeforeWhite: currentReview.evals[t.ply], wpAfterWhite: currentReview.evals[t.ply + 1] };
+    } else {
+      rv = await judgeTry(Chess, t.fen, uci, { analyzer: getTryAz(), timeMs: Math.round(REVIEW_TIME_MS * 2.5) });
+    }
     if (panel._try !== t) return;
     t.done.rv = rv;
-    setCoach(panel._coach, coachLine(rv, 0, { Chess, fen: t.fen, lang: getLang(), evals: [rv.wpBeforeWhite, rv.wpAfterWhite] }));
+    setCoach(panel._coach, coachLine(rv, 0, { Chess, fen: t.fen, lang: getLang(), evals: [rv.wpBeforeWhite, rv.wpAfterWhite], plyReal: t.ply, salt: t.attempt }));
     const info = CLASS_INFO[rv.cls];
     if (panel._info) {
       panel._info.innerHTML =
@@ -1366,7 +1374,7 @@ function runReviewInBox(boxId, btnId) {
         })),
         {
           Chess,
-          timeMs: 150,
+          timeMs: REVIEW_TIME_MS,
           onProgress: (i, t) => {
             box.innerHTML =
               `<p class="rv-progress">Nyra đang phân tích… ${i}/${t}</p><div class="rv-bar"><div style="width:${(i / t * 100).toFixed(0)}%"></div></div>`;
