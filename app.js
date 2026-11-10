@@ -1,6 +1,6 @@
 import { Chess } from "./vendor/chess.js?v=1";
 import { getNyraMove, hasLocalNyra } from "./nyra-client.js?v=5";
-import { reviewGame, CLASS_INFO, CLASS_ORDER, judgeTry, makeAnalyzer, REVIEW_TIME_MS } from "./nyra-review.js?v=9";
+import { reviewGame, CLASS_INFO, CLASS_ORDER, judgeTry, makeAnalyzer, REVIEW_TIME_MS } from "./nyra-review.js?v=10";
 import { initArena } from "./arena.js?v=2";
 import { StockfishEngine, SF_LEVELS } from "./stockfish-client.js?v=2";
 import { initI18n, getLang } from "./i18n.js?v=5";
@@ -556,6 +556,7 @@ async function runAutoReview() {
   const box = $("reviewResult");
   if (btn) btn.disabled = true;
   if (box) box.innerHTML = `<p class="rv-progress">Phân tích tự động… 0/0</p><div class="rv-bar"><div style="width:0%"></div></div>`;
+  let partialShown = false;
   try {
     currentReview = await reviewGame(
       chess.history({ verbose: true }).map(m => ({
@@ -567,8 +568,14 @@ async function runAutoReview() {
         Chess,
         timeMs: REVIEW_TIME_MS,
         onProgress: (i, t) => {
+          if (partialShown) { const n = box && box.querySelector(".rv-refine-note"); if (n) n.textContent = `Đang kiểm tra kỹ lại các nước quan trọng… ${Math.round(i / t * 100)}%`; return; }
           if (box) box.innerHTML =
             `<p class="rv-progress">Phân tích tự động… ${i}/${t}</p><div class="rv-bar"><div style="width:${(i / t * 100).toFixed(0)}%"></div></div>`;
+        },
+        onPartial: (pr) => {
+          partialShown = true;
+          currentReview = pr;
+          if (box) { renderReview(box, pr); box.insertAdjacentHTML("afterbegin", `<p class="rv-progress rv-refine-note">Đang kiểm tra kỹ lại các nước quan trọng…</p>`); }
         },
       }
     );
@@ -1364,6 +1371,7 @@ function runReviewInBox(boxId, btnId) {
   }
   if (btn) btn.disabled = true;
   box.innerHTML = `<p class="rv-progress">Nyra đang phân tích… 0/0</p><div class="rv-bar"><div style="width:0%"></div></div>`;
+  let partialShown = false;
   (async () => {
     try {
       const r = await reviewGame(
@@ -1376,8 +1384,15 @@ function runReviewInBox(boxId, btnId) {
           Chess,
           timeMs: REVIEW_TIME_MS,
           onProgress: (i, t) => {
+            if (partialShown) { const n = box.querySelector(".rv-refine-note"); if (n) n.textContent = `Đang kiểm tra kỹ lại các nước quan trọng… ${Math.round(i / t * 100)}%`; return; }
             box.innerHTML =
               `<p class="rv-progress">Nyra đang phân tích… ${i}/${t}</p><div class="rv-bar"><div style="width:${(i / t * 100).toFixed(0)}%"></div></div>`;
+          },
+          onPartial: (pr) => {
+            partialShown = true;
+            currentReview = pr;
+            renderReview(box, pr);
+            box.insertAdjacentHTML("afterbegin", `<p class="rv-progress rv-refine-note">Đang kiểm tra kỹ lại các nước quan trọng…</p>`);
           },
         }
       );

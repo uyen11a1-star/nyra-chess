@@ -103,7 +103,8 @@ function classify(x) {
 // Số worker chạy song song: phân tích từng thế cờ độc lập nên chia thế cờ cho nhiều worker là nhanh gần tuyệt đối theo số nhân
 export function pickWorkers() {
   const hc = (typeof navigator !== "undefined" && navigator.hardwareConcurrency) || 2;
-  return Math.max(1, Math.min(4, Math.floor(hc / 2)));
+  // Kết quả không phụ thuộc số worker (đã kiểm chứng) nên dùng nhiều nhân hơn là an toàn: chừa 2 nhân cho giao diện/hệ thống
+  return Math.max(1, Math.min(6, hc - 2));
 }
 export function makeAnalyzer(nWorkers = pickWorkers()) {
   // "#st" ép mỗi worker chạy 1 luồng (nhiều worker chạy song song theo thế cờ hiệu quả hơn nhiều luồng trong một lần tìm)
@@ -121,18 +122,24 @@ export function makeAnalyzer(nWorkers = pickWorkers()) {
     w.onerror = () => { for (const [, p] of pend) p.rej(new Error("Worker lỗi")); pend.clear(); };
     ws.push(w);
   }
-  const send = (w, fen, timeMs, played) => new Promise((res, rej) => { const i = ++id; pend.set(i, { res, rej }); w.postMessage({ id: i, fen, timeMs, type: "analyze", played: played || "", reset: true, vstep: VSTEP }); });
+  const send = (w, fen, timeMs, played, reset = true) => new Promise((res, rej) => { const i = ++id; pend.set(i, { res, rej }); w.postMessage({ id: i, fen, timeMs, type: "analyze", played: played || "", reset, vstep: VSTEP }); });
   return {
     analyze: (fen, timeMs, played) => send(ws[0], fen, timeMs, played),
-    // items: [{fen, timeMs, played}] -> kết quả theo đúng thứ tự. Chia thành các đoạn liên tiếp cho từng worker để bảng băm dùng lại được giữa thế cờ kề nhau.
-    analyzeBatch: async (items, onItem) => {
+    // items: [{fen, timeMs, played}] -> kết quả theo đúng thứ tự.
+    // Chia thành các nhóm CỐ ĐỊNH `chunk` thế liên tiếp; mỗi nhóm do một worker làm tuần tự, chỉ xoá engine ở đầu nhóm (các thế kề nhau dùng lại bảng băm nên tìm sâu hơn cùng một ngân sách).
+    // Kết quả chỉ phụ thuộc cách chia nhóm (cố định), không phụ thuộc số worker hay worker nào làm; worker rảnh lấy nhóm kế tiếp nên không bị lệch tải.
+    analyzeBatch: async (items, onItem, { chunk = 1 } = {}) => {
       const out = new Array(items.length);
-      const P = Math.max(1, Math.min(ws.length, items.length));
-      const chunk = Math.ceil(items.length / P);
-      await Promise.all(ws.slice(0, P).map(async (w, k) => {
-        for (let j = k * chunk; j < Math.min(items.length, (k + 1) * chunk); j++) {
-          out[j] = await send(w, items[j].fen, items[j].timeMs, items[j].played);
-          if (onItem) onItem();
+      const nChunks = Math.ceil(items.length / chunk);
+      let next = 0;
+      await Promise.all(ws.map(async (w) => {
+        for (;;) {
+          const c = next++;
+          if (c >= nChunks) return;
+          for (let j = c * chunk; j < Math.min(items.length, (c + 1) * chunk); j++) {
+            out[j] = await send(w, items[j].fen, items[j].timeMs, items[j].played, j === c * chunk);
+            if (onItem) onItem();
+          }
         }
       }));
       return out;
@@ -143,13 +150,14 @@ export function makeAnalyzer(nWorkers = pickWorkers()) {
 
 // moves: [{from,to,promotion}]. Trả về { moves, summary, evals }
 const DEF_REFINE = 12, DEF_REFINE_X = 2.5;
+export const REVIEW_CHUNK = 1, REFINE_CHUNK = 1;
 export const REVIEW_TIME_MS = 400;  // đủ thời gian để kết quả ổn định (đã đo: lặp lại cho kết quả y hệt)
-const REVIEW_VER = "r4";
+const REVIEW_VER = "r5";
 // Đồng hồ ảo: mỗi lần engine hỏi giờ nhích 1,3ms -> giới hạn thời gian thành giới hạn số nút tìm kiếm, kết quả y hệt ở mọi máy và mọi lần chạy
 const VSTEP = 1.3e6;
 
 // Bộ nhớ kết quả: cùng một ván (cùng dãy nước + cùng thông số) luôn trả về đúng kết quả đã tính, không tính lại
-const CACHE_KEY = "nyra_review_cache_v4", CACHE_MAX = 24;
+const CACHE_KEY = "nyra_review_cache_v5", CACHE_MAX = 24;
 const memCache = new Map();
 function loadCache() { try { return JSON.parse(localStorage.getItem(CACHE_KEY) || "{}"); } catch (e) { return {}; } }
 function saveCache(key, data) {
@@ -170,16 +178,16 @@ function readCache(key) {
 function gameKey(moves, p) { return REVIEW_VER + "|" + p.join(",") + "|" + moves.map((m) => m.from + m.to + (m.promotion || "")).join(" "); }
 
 export async function reviewGame(moves, opts = {}) {
-  const { timeMs = REVIEW_TIME_MS, maxRefine = DEF_REFINE, refineX = DEF_REFINE_X, onProgress } = opts;
-  const key = gameKey(moves, [timeMs, maxRefine, refineX]);
+  const { timeMs = REVIEW_TIME_MS, maxRefine = DEF_REFINE, refineX = DEF_REFINE_X, chunk1 = REVIEW_CHUNK, chunk2 = REFINE_CHUNK, onProgress } = opts;
+  const key = gameKey(moves, [timeMs, maxRefine, refineX, chunk1, chunk2]);
   const hit = readCache(key);
   if (hit) { if (onProgress) onProgress(1, 1); return JSON.parse(JSON.stringify(hit)); }
-  const res = await reviewGameFresh(moves, { ...opts, timeMs, maxRefine, refineX });
+  const res = await reviewGameFresh(moves, { ...opts, timeMs, maxRefine, refineX, chunk1, chunk2 });
   saveCache(key, res);
   return res;
 }
 
-async function reviewGameFresh(moves, { Chess, timeMs = REVIEW_TIME_MS, maxRefine = DEF_REFINE, refineX = DEF_REFINE_X, onProgress, analyzer } = {}) {
+async function reviewGameFresh(moves, { Chess, timeMs = REVIEW_TIME_MS, maxRefine = DEF_REFINE, refineX = DEF_REFINE_X, chunk1 = REVIEW_CHUNK, chunk2 = REFINE_CHUNK, onProgress, onPartial, analyzer } = {}) {
   const az = analyzer || makeAnalyzer();
   try {
     const chess = new Chess();
@@ -193,16 +201,16 @@ async function reviewGameFresh(moves, { Chess, timeMs = REVIEW_TIME_MS, maxRefin
     const n = infos.length, over = chess.isGameOver(), mated = chess.isCheckmate();
     const total = over ? n : n + 1;
     // Chạy cho mọi thế cờ (song song nếu analyzer có analyzeBatch); truyền nước đã đi để engine chỉ tìm "nước tốt thứ hai" khi cần
-    const runAll = async (idxs, ms, tickBase, tickTotal) => {
+    const runAll = async (idxs, ms, tickBase, tickTotal, chunk = 1) => {
       const items = idxs.map((j) => ({ fen: fens[j], timeMs: ms, played: j < n ? infos[j].uci : "" }));
       let k = 0;
       const tick = () => { if (onProgress) onProgress(tickBase + (++k), tickTotal); };
-      if (az.analyzeBatch) return az.analyzeBatch(items, tick);
+      if (az.analyzeBatch) return az.analyzeBatch(items, tick, { chunk });
       const res = [];
       for (const it of items) { res.push(await az.analyze(it.fen, it.timeMs, it.played)); tick(); }
       return res;
     };
-    const an = await runAll([...Array(total).keys()], timeMs, 0, total);
+    const an = await runAll([...Array(total).keys()], timeMs, 0, total, chunk1);
     if (over) an[n] = { over: true, mated };
 
     const turnOf = (j) => fens[j].split(" ")[1];
@@ -251,16 +259,25 @@ async function reviewGameFresh(moves, { Chess, timeMs = REVIEW_TIME_MS, maxRefin
     // Vòng 2 ("nghĩ kỹ lại"): với tối đa MAX_REFINE nước nghiêm trọng hoặc đặc biệt, phân tích lại hai thế bằng thời gian gấp REFINE_X
     // để tránh phán nhầm "sai lầm nặng"/"thiên tài" chỉ vì lần quét nhanh nhìn chưa tới.
     // Ưu tiên các nước nghi là hy sinh hay (loss nhỏ trước) vì quét nhanh dễ nhìn chưa tới; sau đó mới đến các nước nặng nhất.
+    const build = (outArr, evArr) => {
+      const mv = outArr.map((m) => ({ ...m, wpAfterWhite: evArr[m.ply + 1] }));
+      const sm = { w: { acc: 0, n: 0, counts: {} }, b: { acc: 0, n: 0, counts: {} } };
+      for (const m of mv) { const s = sm[m.side]; s.acc += m.acc; s.n++; s.counts[m.cls] = (s.counts[m.cls] || 0) + 1; }
+      for (const k of ["w", "b"]) sm[k].acc = sm[k].n ? sm[k].acc / sm[k].n : 0;
+      return { moves: mv, summary: sm, evals: [...evArr] };
+    };
     const susp = out.filter((m) => m.sacCand && m.loss <= 15).sort((a, b) => a.loss - b.loss).slice(0, 5);
     const heavy = out.filter((m) => ["blunder", "mistake", "brilliant", "great"].includes(m.cls) || m.sacrifice).sort((a, b) => b.loss - a.loss);
     const pick = [];
     for (const m of [...susp, ...heavy]) if (!pick.includes(m) && pick.length < maxRefine) pick.push(m);
     const cand = pick.map((m) => m.ply).sort((a, b) => a - b);
+    // Có vòng nghĩ kỹ lại thì báo kết quả tạm ngay (đã đủ dùng), vòng sau chỉ chỉnh lại vài nước quan trọng
+    if (cand.length && onPartial) { try { onPartial(build(out, evals)); } catch (e) {} }
     if (cand.length) {
       const need = new Set();
       for (const i of cand) { need.add(i); if (i + 1 < n || (i + 1 === n && !over)) need.add(i + 1); }
       const js = [...need].sort((a, b) => a - b).filter((j) => !(an[j] && an[j].over));
-      const re = await runAll(js, Math.round(timeMs * refineX), total, total + js.length);
+      const re = await runAll(js, Math.round(timeMs * refineX), total, total + js.length, chunk2);
       js.forEach((j, q) => { an[j] = re[q]; });
       const redo = new Set();
       for (const i of cand) { redo.add(i - 1); redo.add(i); redo.add(i + 1); }
@@ -269,16 +286,7 @@ async function reviewGameFresh(moves, { Chess, timeMs = REVIEW_TIME_MS, maxRefin
       evals.length = 0;
       an.forEach((a, j) => { const t = turnOf(j); let cp = a.over ? (a.mated ? -MATE_CP : 0) : toCp(a.score); if (t === "b") cp = -cp; evals.push(winPercent(cp)); });
     }
-    for (let i = 0; i < n; i++) out[i].wpAfterWhite = evals[i + 1];
-
-    const summary = { w: { acc: 0, n: 0, counts: {} }, b: { acc: 0, n: 0, counts: {} } };
-    for (const m of out) {
-      const s = summary[m.side];
-      s.acc += m.acc; s.n++;
-      s.counts[m.cls] = (s.counts[m.cls] || 0) + 1;
-    }
-    for (const k of ["w", "b"]) summary[k].acc = summary[k].n ? summary[k].acc / summary[k].n : 0;
-    return { moves: out, summary, evals };
+    return build(out, evals);
   } finally {
     if (!analyzer) az.close();
   }
