@@ -235,6 +235,7 @@ async function reviewGameFresh(moves, { Chess, timeMs = REVIEW_TIME_MS, maxRefin
       if (turnOf(j) === "b") cp = -cp;
       return winPercent(cp);
     };
+    let judgeMs = 0, judgeCalls = 0;
     const judge = (i) => {
       const cur = an[i], nxt = an[i + 1], side = infos[i].side;
       const bestCp = toCp(cur.score);
@@ -267,6 +268,7 @@ async function reviewGameFresh(moves, { Chess, timeMs = REVIEW_TIME_MS, maxRefin
                bestUci: cur.best || "", acc: isBest ? 100 : moveAccuracy(loss),
                bestCp, afterCp, pvBest: cur.pv || null, pvAfter: nxt.over ? null : (nxt.pv || null) };
     };
+    const timedJudge = (i) => { const t = performance.now(); const r = judge(i); judgeMs += performance.now() - t; judgeCalls++; return r; };
     const build = (outArr, evArr) => {
       const mv = outArr.map((m) => ({ ...m, wpAfterWhite: evArr[m.ply + 1] }));
       const sm = { w: { acc: 0, n: 0, counts: {} }, b: { acc: 0, n: 0, counts: {} } };
@@ -275,27 +277,31 @@ async function reviewGameFresh(moves, { Chess, timeMs = REVIEW_TIME_MS, maxRefin
       return { moves: mv, summary: sm, evals: [...evArr] };
     };
     // Kết quả hiện dần theo thứ tự nước đi: khi các thế đầu đã phân tích xong thì báo ngay (giới hạn ~1 lần/giây), người dùng xem lại được từ nước đầu mà không phải chờ hết ván
-    let prefix = 0, lastEmit = 0;
+    // Mỗi nước chỉ chấm MỘT lần ở lượt quét (kết quả lưu lại); chấm lại cả đoạn đầu mỗi lần cập nhật sẽ tốn thời gian tăng theo bình phương và làm các worker phải chờ luồng chính
+    let prefix = 0, lastEmit = 0, nextEmitAt = 0;
+    const judgedFirst = [], evFirst = [];
     const onFirstDone = (q, res) => {
       an[q] = res;
       while (prefix < total && an[prefix]) prefix++;
       const now = performance.now();
-      if (!onPartial || prefix < 4 || now - lastEmit < 1000 || prefix >= total) return;
-      lastEmit = now;
+      if (!onPartial || prefix < 4 || now < nextEmitAt || prefix >= total) return;
+      const t0 = performance.now();
       const upto = Math.min(prefix - 1, n);
-      const outP = [], evP = [];
-      for (let i = 0; i < upto; i++) outP.push(judge(i));
-      for (let j = 0; j < prefix; j++) evP.push(winOf(an[j], j));
-      const pr = build(outP, evP);
+      for (let i = judgedFirst.length; i < upto; i++) judgedFirst.push(timedJudge(i));
+      for (let j = evFirst.length; j < prefix; j++) evFirst.push(winOf(an[j], j));
+      const pr = build(judgedFirst.slice(), evFirst.slice());
       pr.stage = "scan"; pr.graphN = total;
       try { onPartial(pr); } catch (e) { /* bỏ qua */ }
+      // giới hạn phần thời gian luồng chính dành cho việc cập nhật: tối đa ~10% (mỗi lần cập nhật chờ ít nhất 10 lần thời gian nó tốn)
+      lastEmit = performance.now();
+      nextEmitAt = lastEmit + Math.max(1000, 10 * (lastEmit - t0));
     };
     const firstRes = await runAll([...Array(total).keys()], timeMs, 0, total, chunk1, onFirstDone);
     firstRes.forEach((res, q) => { an[q] = res; });
     if (over) an[n] = { over: true, mated };
     const evals = an.map((a, j) => winOf(a, j));
     const out = [];
-    for (let i = 0; i < n; i++) out.push(judge(i));
+    for (let i = 0; i < n; i++) out.push(i < judgedFirst.length ? judgedFirst[i] : timedJudge(i));
 
     // Vòng 2 ("nghĩ kỹ lại"): với tối đa MAX_REFINE nước nghiêm trọng hoặc đặc biệt, phân tích lại hai thế bằng thời gian gấp REFINE_X
     // để tránh phán nhầm "sai lầm nặng"/"thiên tài" chỉ vì lần quét nhanh nhìn chưa tới.
@@ -324,7 +330,7 @@ async function reviewGameFresh(moves, { Chess, timeMs = REVIEW_TIME_MS, maxRefin
         js.forEach((j, q) => { an[j] = re[q]; });
         const redo = new Set();
         for (const i of cs) { redo.add(i - 1); redo.add(i); redo.add(i + 1); }
-        for (const i of redo) if (i >= 0 && i < n) out[i] = judge(i);
+        for (const i of redo) if (i >= 0 && i < n) out[i] = timedJudge(i);
         if (k + 1 < ladder.length) cs = cs.filter((i) => ["blunder", "mistake", "brilliant", "great"].includes(out[i].cls) || out[i].sacrifice);
       }
       // win% của Trắng sau mỗi nước dựa trên kết quả phân tích mới nhất
@@ -332,7 +338,7 @@ async function reviewGameFresh(moves, { Chess, timeMs = REVIEW_TIME_MS, maxRefin
       an.forEach((a, j) => { const t = turnOf(j); let cp = a.over ? (a.mated ? -MATE_CP : 0) : toCp(a.score); if (t === "b") cp = -cp; evals.push(winPercent(cp)); });
     }
     const fin = build(out, evals);
-    fin.stats = { workers: az.size || 0, firstSec: tFirst, busyFirst, busySec: (az.busyMs || 0) / 1000, items: total };
+    fin.stats = { workers: az.size || 0, firstSec: tFirst, busyFirst, busySec: (az.busyMs || 0) / 1000, items: total, judgeSec: judgeMs / 1000, judgeCalls };
     return fin;
   } finally {
     if (!analyzer) az.close();
