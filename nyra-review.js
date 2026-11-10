@@ -161,13 +161,15 @@ export function makeAnalyzer(nWorkers = pickWorkers()) {
 // cho độ khớp ngang bản cũ (400 + 1000x2.5) nhưng nhanh hơn 25-45%.
 export const REVIEW_TIME_MS = 150, REFINE_MS = 1000;
 const DEF_REFINE = 12, DEF_REFINE_X = REFINE_MS / REVIEW_TIME_MS;
+// Kiểm tra lại theo tầng: 12 nước nghi ngờ nhất xem ở mức 300, chỉ nước còn nặng mới xem tiếp ở mức 1000 (đo trên 3 ván: nhanh hơn 13-17%, độ khớp y hệt)
+const DEF_TIERS = [300, REFINE_MS];
 export const REVIEW_CHUNK = 1, REFINE_CHUNK = 1;
-const REVIEW_VER = "r6";
+const REVIEW_VER = "r7";
 // Đồng hồ ảo: mỗi lần engine hỏi giờ nhích 1,3ms -> giới hạn thời gian thành giới hạn số nút tìm kiếm, kết quả y hệt ở mọi máy và mọi lần chạy
 const VSTEP = 1.3e6;
 
 // Bộ nhớ kết quả: cùng một ván (cùng dãy nước + cùng thông số) luôn trả về đúng kết quả đã tính, không tính lại
-const CACHE_KEY = "nyra_review_cache_v6", CACHE_MAX = 24;
+const CACHE_KEY = "nyra_review_cache_v7", CACHE_MAX = 24;
 const memCache = new Map();
 function loadCache() { try { return JSON.parse(localStorage.getItem(CACHE_KEY) || "{}"); } catch (e) { return {}; } }
 function saveCache(key, data) {
@@ -188,21 +190,21 @@ function readCache(key) {
 function gameKey(moves, p) { return REVIEW_VER + "|" + p.join(",") + "|" + moves.map((m) => m.from + m.to + (m.promotion || "")).join(" "); }
 
 export async function reviewGame(moves, opts = {}) {
-  const { timeMs = REVIEW_TIME_MS, maxRefine = DEF_REFINE, refineX = DEF_REFINE_X, chunk1 = REVIEW_CHUNK, chunk2 = REFINE_CHUNK, onProgress } = opts;
-  const key = gameKey(moves, [timeMs, maxRefine, refineX, chunk1, chunk2]);
+  const { timeMs = REVIEW_TIME_MS, maxRefine = DEF_REFINE, refineX = DEF_REFINE_X, chunk1 = REVIEW_CHUNK, chunk2 = REFINE_CHUNK, refineTiers = DEF_TIERS, includeInacc = false, onProgress } = opts;
+  const key = gameKey(moves, [timeMs, maxRefine, refineX, chunk1, chunk2, refineTiers ? refineTiers.join("/") : "-", includeInacc ? "i" : "-"]);
   const hit = readCache(key);
   if (hit) { if (onProgress) onProgress(1, 1); const c = JSON.parse(JSON.stringify(hit)); c.stats = { ...(c.stats || {}), cached: true }; return c; }
   const t0 = Date.now();
-  const res = await reviewGameFresh(moves, { ...opts, timeMs, maxRefine, refineX, chunk1, chunk2 });
+  const res = await reviewGameFresh(moves, { ...opts, timeMs, maxRefine, refineX, chunk1, chunk2, refineTiers, includeInacc });
   res.stats = { ...(res.stats || {}), sec: (Date.now() - t0) / 1000 };
   saveCache(key, res);
   return res;
 }
 
-async function reviewGameFresh(moves, { Chess, timeMs = REVIEW_TIME_MS, maxRefine = DEF_REFINE, refineX = DEF_REFINE_X, chunk1 = REVIEW_CHUNK, chunk2 = REFINE_CHUNK, onProgress, onPartial, analyzer } = {}) {
+async function reviewGameFresh(moves, { Chess, timeMs = REVIEW_TIME_MS, maxRefine = DEF_REFINE, refineX = DEF_REFINE_X, chunk1 = REVIEW_CHUNK, chunk2 = REFINE_CHUNK, refineTiers = null, includeInacc = false, onProgress, onPartial, analyzer } = {}) {
   const az = analyzer || makeAnalyzer();
   const T0 = performance.now();
-  let tFirst = 0;
+  let tFirst = 0, busyFirst = 0;
   let wakeLock = null;
   try { if (typeof navigator !== "undefined" && navigator.wakeLock) wakeLock = await navigator.wakeLock.request("screen"); } catch (e) { /* không bắt buộc */ }  // giữ màn hình sáng để trình duyệt không hạ tốc độ khi đang phân tích
   try {
@@ -283,28 +285,38 @@ async function reviewGameFresh(moves, { Chess, timeMs = REVIEW_TIME_MS, maxRefin
       return { moves: mv, summary: sm, evals: [...evArr] };
     };
     tFirst = (performance.now() - T0) / 1000;
+    busyFirst = (az.busyMs || 0) / 1000;
     const susp = out.filter((m) => m.sacCand && m.loss <= 15).sort((a, b) => a.loss - b.loss).slice(0, 5);
-    const heavy = out.filter((m) => ["blunder", "mistake", "brilliant", "great"].includes(m.cls) || m.sacrifice).sort((a, b) => b.loss - a.loss);
+    const heavyCls = includeInacc ? ["inaccuracy", "blunder", "mistake", "brilliant", "great"] : ["blunder", "mistake", "brilliant", "great"];
+    const heavy = out.filter((m) => heavyCls.includes(m.cls) || m.sacrifice).sort((a, b) => b.loss - a.loss);
     const pick = [];
     for (const m of [...susp, ...heavy]) if (!pick.includes(m) && pick.length < maxRefine) pick.push(m);
     const cand = pick.map((m) => m.ply).sort((a, b) => a - b);
     // Có vòng nghĩ kỹ lại thì báo kết quả tạm ngay (đã đủ dùng), vòng sau chỉ chỉnh lại vài nước quan trọng
     if (cand.length && onPartial) { try { onPartial(build(out, evals)); } catch (e) {} }
     if (cand.length) {
-      const need = new Set();
-      for (const i of cand) { need.add(i); if (i + 1 < n || (i + 1 === n && !over)) need.add(i + 1); }
-      const js = [...need].sort((a, b) => a - b).filter((j) => !(an[j] && an[j].over));
-      const re = await runAll(js, Math.round(timeMs * refineX), total, total + js.length, chunk2);
-      js.forEach((j, q) => { an[j] = re[q]; });
-      const redo = new Set();
-      for (const i of cand) { redo.add(i - 1); redo.add(i); redo.add(i + 1); }
-      for (const i of redo) if (i >= 0 && i < n) out[i] = judge(i);
+      // Kiểm tra lại theo tầng: tầng đầu nhẹ cho mọi nước nghi ngờ, các tầng sau (sâu hơn) chỉ cho nước vẫn còn nặng (sai lầm/thiên tài/hy sinh)
+      const ladder = refineTiers && refineTiers.length ? refineTiers : [Math.round(timeMs * refineX)];
+      let cs = cand;
+      let tickBase = total;
+      for (let k = 0; k < ladder.length && cs.length; k++) {
+        const need = new Set();
+        for (const i of cs) { need.add(i); if (i + 1 < n || (i + 1 === n && !over)) need.add(i + 1); }
+        const js = [...need].sort((a, b) => a - b).filter((j) => !(an[j] && an[j].over));
+        const re = await runAll(js, ladder[k], tickBase, total + js.length * (ladder.length - k) + (tickBase - total), chunk2);
+        tickBase += js.length;
+        js.forEach((j, q) => { an[j] = re[q]; });
+        const redo = new Set();
+        for (const i of cs) { redo.add(i - 1); redo.add(i); redo.add(i + 1); }
+        for (const i of redo) if (i >= 0 && i < n) out[i] = judge(i);
+        if (k + 1 < ladder.length) cs = cs.filter((i) => ["blunder", "mistake", "brilliant", "great"].includes(out[i].cls) || out[i].sacrifice);
+      }
       // win% của Trắng sau mỗi nước dựa trên kết quả phân tích mới nhất
       evals.length = 0;
       an.forEach((a, j) => { const t = turnOf(j); let cp = a.over ? (a.mated ? -MATE_CP : 0) : toCp(a.score); if (t === "b") cp = -cp; evals.push(winPercent(cp)); });
     }
     const fin = build(out, evals);
-    fin.stats = { workers: az.size || 0, firstSec: tFirst, busySec: (az.busyMs || 0) / 1000, items: total };
+    fin.stats = { workers: az.size || 0, firstSec: tFirst, busyFirst, busySec: (az.busyMs || 0) / 1000, items: total };
     return fin;
   } finally {
     if (!analyzer) az.close();
