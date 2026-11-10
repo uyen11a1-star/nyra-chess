@@ -1,13 +1,13 @@
 import { Chess } from "./vendor/chess.js?v=1";
 import { getNyraMove, hasLocalNyra } from "./nyra-client.js?v=5";
-import { reviewGame, CLASS_INFO, CLASS_ORDER, judgeTry, makeAnalyzer, REVIEW_TIME_MS, REFINE_MS } from "./nyra-review.js?v=11";
+import { reviewGame, CLASS_INFO, CLASS_ORDER, judgeTry, makeAnalyzer, REVIEW_TIME_MS, REFINE_MS } from "./nyra-review.js?v=12";
 import { initArena } from "./arena.js?v=2";
 import { StockfishEngine, SF_LEVELS } from "./stockfish-client.js?v=2";
-import { initI18n, getLang } from "./i18n.js?v=5";
-import { initSettings } from "./settings.js?v=5";
-import { initPuzzle } from "./puzzle.js?v=5";
-import { sfx } from "./sound.js?v=4";
-import { slideMove } from "./fx.js?v=1";
+import { initI18n, getLang } from "./i18n.js?v=6";
+import { initSettings } from "./settings.js?v=6";
+import { initPuzzle } from "./puzzle.js?v=6";
+import { sfx } from "./sound.js?v=5";
+import { slideMove } from "./fx.js?v=2";
 import { coachLine, buildCoach, setCoach, coachThinking, coachTryHint } from "./coach.js?v=5";
 
 const $ = (id) => document.getElementById(id);

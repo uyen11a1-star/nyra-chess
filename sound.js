@@ -5,7 +5,7 @@
 // (thân trầm ~200Hz, hai họa âm giữa, một chút "tách" ở dải cao), mỗi mode tắt dần với tốc độ riêng.
 // Có 3 kiểu tiếng để chọn trong ⚙: Gỗ, Gỗ trầm (quân nặng), Nhẹ (quân nhẹ/dạ).
 // Các âm báo thắng/thua và puzzle (chuông) là phần phụ, mặc định tắt.
-import { getSettings, onSettingsChange } from "./settings.js?v=5";
+import { getSettings, onSettingsChange } from "./settings.js?v=6";
 
 const D4 = 293.66;                     // Rê4
 const PENT = [0, 2, 4, 7, 9];          // thang năm âm trưởng

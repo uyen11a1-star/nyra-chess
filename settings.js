@@ -1,10 +1,10 @@
 // settings.js — bánh răng cài đặt: ngôn ngữ + tuỳ chỉnh puzzle. Lưu trong localStorage.
-import { t, getLang, setLang } from "./i18n.js?v=5";
+import { t, getLang, setLang } from "./i18n.js?v=6";
 import { warmOffline, offlineStatus, offlineSupported } from "./offline.js?v=1";
 
 const KEY = "nyraSettings";
 const DEFAULTS = { autoNext: true, autoQueen: false, showRating: true, showThemes: false, nyraMs: 1500, sound: true, volume: 70, anim: true,
-  soundStyle: "wood", soundExtras: false, boardTheme: "wood", coords: true, hints: true };
+  soundStyle: "wood", soundExtras: false, boardTheme: "wood", coords: true, hints: true, reviewCpu: "balanced" };
 let cfg = { ...DEFAULTS };
 try { Object.assign(cfg, JSON.parse(localStorage.getItem(KEY) || "{}")); } catch (e) { /* bỏ qua */ }
 const subs = new Set();
@@ -91,6 +91,13 @@ export function initSettings({ onResetPuzzle } = {}) {
           <p class="small-note" id="stMsg"></p>
         </div>
         <div class="st-group">
+          <div class="st-label">${t("settings.group.review")}</div>
+          <label class="st-row st-select">${t("settings.reviewCpu")}
+            <select id="stReviewCpu">${["eco", "balanced", "max"].map((k) => `<option value="${k}" ${cfg.reviewCpu === k ? "selected" : ""}>${t("settings.cpu." + k)}</option>`).join("")}</select>
+          </label>
+          <p class="small-note">${t("settings.reviewCpuNote")}</p>
+        </div>
+        <div class="st-group">
           <div class="st-label">${t("settings.offline")}</div>
           ${offlineSupported() ? `<button id="stOffline" class="btn btn-outline full-width" type="button">⬇ ${t("settings.offlineBtn")}</button>
           <p class="small-note" id="stOfflineMsg">${t("settings.offlineNote")}</p>` : `<p class="small-note">${t("settings.offlineNo")}</p>`}
@@ -104,6 +111,7 @@ export function initSettings({ onResetPuzzle } = {}) {
     bind("stAutoNext", "autoNext"); bind("stAutoQueen", "autoQueen");
     bind("stShowRating", "showRating"); bind("stShowThemes", "showThemes");
     $("stNyraMs").onchange = (e) => { cfg.nyraMs = Number(e.target.value); save(); };
+    $("stReviewCpu").onchange = (e) => { cfg.reviewCpu = e.target.value; save(); };
     bind("stSound", "sound"); bind("stAnim", "anim"); bind("stCoords", "coords"); bind("stHints", "hints"); bind("stSoundExtras", "soundExtras");
     $("stSoundStyle").onchange = (e) => { cfg.soundStyle = e.target.value; save(); window.dispatchEvent(new CustomEvent("nyra-sfx-test")); };
     modal.querySelectorAll("[data-bt]").forEach((b) => {

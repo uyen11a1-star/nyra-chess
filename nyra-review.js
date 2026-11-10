@@ -103,7 +103,12 @@ function classify(x) {
 // Số worker chạy song song: phân tích từng thế cờ độc lập nên chia thế cờ cho nhiều worker là nhanh gần tuyệt đối theo số nhân
 export function pickWorkers() {
   const hc = (typeof navigator !== "undefined" && navigator.hardwareConcurrency) || 2;
-  // Kết quả không phụ thuộc số worker (đã kiểm chứng) nên dùng nhiều nhân hơn là an toàn: chừa 2 nhân cho giao diện/hệ thống
+  let mode = "balanced";
+  try { mode = JSON.parse(localStorage.getItem("nyraSettings") || "{}").reviewCpu || "balanced"; } catch (e) { /* bỏ qua */ }
+  // Kết quả không phụ thuộc số worker (đã kiểm chứng), nên chọn số luồng chỉ ảnh hưởng tốc độ/độ nóng máy:
+  // tiết kiệm = nửa số nhân, cân bằng = chừa 2 nhân cho giao diện, tối đa = dùng hết các nhân
+  if (mode === "eco") return Math.max(1, Math.min(4, Math.floor(hc / 2)));
+  if (mode === "max") return Math.max(1, Math.min(12, hc));
   return Math.max(1, Math.min(6, hc - 2));
 }
 export function makeAnalyzer(nWorkers = pickWorkers()) {
@@ -194,6 +199,8 @@ export async function reviewGame(moves, opts = {}) {
 
 async function reviewGameFresh(moves, { Chess, timeMs = REVIEW_TIME_MS, maxRefine = DEF_REFINE, refineX = DEF_REFINE_X, chunk1 = REVIEW_CHUNK, chunk2 = REFINE_CHUNK, onProgress, onPartial, analyzer } = {}) {
   const az = analyzer || makeAnalyzer();
+  let wakeLock = null;
+  try { if (typeof navigator !== "undefined" && navigator.wakeLock) wakeLock = await navigator.wakeLock.request("screen"); } catch (e) { /* không bắt buộc */ }  // giữ màn hình sáng để trình duyệt không hạ tốc độ khi đang phân tích
   try {
     const chess = new Chess();
     const fens = [chess.fen()], infos = [];
@@ -296,6 +303,7 @@ async function reviewGameFresh(moves, { Chess, timeMs = REVIEW_TIME_MS, maxRefin
     return fin;
   } finally {
     if (!analyzer) az.close();
+    try { if (wakeLock) wakeLock.release(); } catch (e) { /* bỏ qua */ }
   }
 }
 
