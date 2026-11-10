@@ -144,7 +144,7 @@ export function makeAnalyzer(nWorkers = pickWorkers()) {
           if (c >= nChunks) return;
           for (let j = c * chunk; j < Math.min(items.length, (c + 1) * chunk); j++) {
             out[j] = await send(w, items[j].fen, items[j].timeMs, items[j].played, j === c * chunk);
-            if (onItem) onItem();
+            if (onItem) onItem(j, out[j]);
           }
         }
       }));
@@ -219,26 +219,22 @@ async function reviewGameFresh(moves, { Chess, timeMs = REVIEW_TIME_MS, maxRefin
     const n = infos.length, over = chess.isGameOver(), mated = chess.isCheckmate();
     const total = over ? n : n + 1;
     // Chạy cho mọi thế cờ (song song nếu analyzer có analyzeBatch); truyền nước đã đi để engine chỉ tìm "nước tốt thứ hai" khi cần
-    const runAll = async (idxs, ms, tickBase, tickTotal, chunk = 1) => {
+    const runAll = async (idxs, ms, tickBase, tickTotal, chunk = 1, onDone = null) => {
       const items = idxs.map((j) => ({ fen: fens[j], timeMs: ms, played: j < n ? infos[j].uci : "" }));
       let k = 0;
-      const tick = () => { if (onProgress) onProgress(tickBase + (++k), tickTotal); };
+      const tick = (q, res) => { if (onProgress) onProgress(tickBase + (++k), tickTotal); if (onDone && res !== undefined) onDone(q, res); };
       if (az.analyzeBatch) return az.analyzeBatch(items, tick, { chunk });
       const res = [];
-      for (const it of items) { res.push(await az.analyze(it.fen, it.timeMs, it.played)); tick(); }
+      for (let q = 0; q < items.length; q++) { const it = items[q]; res.push(await az.analyze(it.fen, it.timeMs, it.played)); tick(q, res[q]); }
       return res;
     };
-    const an = await runAll([...Array(total).keys()], timeMs, 0, total, chunk1);
-    if (over) an[n] = { over: true, mated };
-
+    const an = new Array(total);
     const turnOf = (j) => fens[j].split(" ")[1];
-    const evals = an.map((a, j) => {  // win% của Trắng sau mỗi nước
-      const t = turnOf(j);
+    const winOf = (a, j) => {  // win% của Trắng ở thế j
       let cp = a.over ? (a.mated ? -MATE_CP : 0) : toCp(a.score);
-      if (t === "b") cp = -cp;
+      if (turnOf(j) === "b") cp = -cp;
       return winPercent(cp);
-    });
-
+    };
     const judge = (i) => {
       const cur = an[i], nxt = an[i + 1], side = infos[i].side;
       const bestCp = toCp(cur.score);
@@ -271,12 +267,6 @@ async function reviewGameFresh(moves, { Chess, timeMs = REVIEW_TIME_MS, maxRefin
                bestUci: cur.best || "", acc: isBest ? 100 : moveAccuracy(loss),
                bestCp, afterCp, pvBest: cur.pv || null, pvAfter: nxt.over ? null : (nxt.pv || null) };
     };
-    const out = [];
-    for (let i = 0; i < n; i++) out.push(judge(i));
-
-    // Vòng 2 ("nghĩ kỹ lại"): với tối đa MAX_REFINE nước nghiêm trọng hoặc đặc biệt, phân tích lại hai thế bằng thời gian gấp REFINE_X
-    // để tránh phán nhầm "sai lầm nặng"/"thiên tài" chỉ vì lần quét nhanh nhìn chưa tới.
-    // Ưu tiên các nước nghi là hy sinh hay (loss nhỏ trước) vì quét nhanh dễ nhìn chưa tới; sau đó mới đến các nước nặng nhất.
     const build = (outArr, evArr) => {
       const mv = outArr.map((m) => ({ ...m, wpAfterWhite: evArr[m.ply + 1] }));
       const sm = { w: { acc: 0, n: 0, counts: {} }, b: { acc: 0, n: 0, counts: {} } };
@@ -284,6 +274,32 @@ async function reviewGameFresh(moves, { Chess, timeMs = REVIEW_TIME_MS, maxRefin
       for (const k of ["w", "b"]) sm[k].acc = sm[k].n ? sm[k].acc / sm[k].n : 0;
       return { moves: mv, summary: sm, evals: [...evArr] };
     };
+    // Kết quả hiện dần theo thứ tự nước đi: khi các thế đầu đã phân tích xong thì báo ngay (giới hạn ~1 lần/giây), người dùng xem lại được từ nước đầu mà không phải chờ hết ván
+    let prefix = 0, lastEmit = 0;
+    const onFirstDone = (q, res) => {
+      an[q] = res;
+      while (prefix < total && an[prefix]) prefix++;
+      const now = performance.now();
+      if (!onPartial || prefix < 4 || now - lastEmit < 1000 || prefix >= total) return;
+      lastEmit = now;
+      const upto = Math.min(prefix - 1, n);
+      const outP = [], evP = [];
+      for (let i = 0; i < upto; i++) outP.push(judge(i));
+      for (let j = 0; j < prefix; j++) evP.push(winOf(an[j], j));
+      const pr = build(outP, evP);
+      pr.stage = "scan"; pr.graphN = total;
+      try { onPartial(pr); } catch (e) { /* bỏ qua */ }
+    };
+    const firstRes = await runAll([...Array(total).keys()], timeMs, 0, total, chunk1, onFirstDone);
+    firstRes.forEach((res, q) => { an[q] = res; });
+    if (over) an[n] = { over: true, mated };
+    const evals = an.map((a, j) => winOf(a, j));
+    const out = [];
+    for (let i = 0; i < n; i++) out.push(judge(i));
+
+    // Vòng 2 ("nghĩ kỹ lại"): với tối đa MAX_REFINE nước nghiêm trọng hoặc đặc biệt, phân tích lại hai thế bằng thời gian gấp REFINE_X
+    // để tránh phán nhầm "sai lầm nặng"/"thiên tài" chỉ vì lần quét nhanh nhìn chưa tới.
+    // Ưu tiên các nước nghi là hy sinh hay (loss nhỏ trước) vì quét nhanh dễ nhìn chưa tới; sau đó mới đến các nước nặng nhất.
     tFirst = (performance.now() - T0) / 1000;
     busyFirst = (az.busyMs || 0) / 1000;
     const susp = out.filter((m) => m.sacCand && m.loss <= 15).sort((a, b) => a.loss - b.loss).slice(0, 5);
@@ -293,7 +309,7 @@ async function reviewGameFresh(moves, { Chess, timeMs = REVIEW_TIME_MS, maxRefin
     for (const m of [...susp, ...heavy]) if (!pick.includes(m) && pick.length < maxRefine) pick.push(m);
     const cand = pick.map((m) => m.ply).sort((a, b) => a - b);
     // Có vòng nghĩ kỹ lại thì báo kết quả tạm ngay (đã đủ dùng), vòng sau chỉ chỉnh lại vài nước quan trọng
-    if (cand.length && onPartial) { try { onPartial(build(out, evals)); } catch (e) {} }
+    if (cand.length && onPartial) { try { const pr = build(out, evals); pr.stage = "verify"; onPartial(pr); } catch (e) {} }
     if (cand.length) {
       // Kiểm tra lại theo tầng: tầng đầu nhẹ cho mọi nước nghi ngờ, các tầng sau (sâu hơn) chỉ cho nước vẫn còn nặng (sai lầm/thiên tài/hy sinh)
       const ladder = refineTiers && refineTiers.length ? refineTiers : [Math.round(timeMs * refineX)];

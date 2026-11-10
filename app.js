@@ -1,6 +1,6 @@
 import { Chess } from "./vendor/chess.js?v=1";
 import { getNyraMove, hasLocalNyra } from "./nyra-client.js?v=5";
-import { reviewGame, CLASS_INFO, CLASS_ORDER, judgeTry, makeAnalyzer, REVIEW_TIME_MS, REFINE_MS } from "./nyra-review.js?v=14";
+import { reviewGame, CLASS_INFO, CLASS_ORDER, judgeTry, makeAnalyzer, REVIEW_TIME_MS, REFINE_MS } from "./nyra-review.js?v=15";
 import { initArena } from "./arena.js?v=2";
 import { StockfishEngine, SF_LEVELS } from "./stockfish-client.js?v=2";
 import { initI18n, getLang } from "./i18n.js?v=6";
@@ -556,7 +556,7 @@ async function runAutoReview() {
   const box = $("reviewResult");
   if (btn) btn.disabled = true;
   if (box) box.innerHTML = `<p class="rv-progress">Phân tích tự động… 0/0</p><div class="rv-bar"><div style="width:0%"></div></div>`;
-  let partialShown = false;
+  let partialShown = false, rvStage = "scan";
   try {
     currentReview = await reviewGame(
       chess.history({ verbose: true }).map(m => ({
@@ -568,14 +568,15 @@ async function runAutoReview() {
         Chess,
         timeMs: REVIEW_TIME_MS,
         onProgress: (i, t) => {
-          if (partialShown) { const n = box && box.querySelector(".rv-refine-note"); if (n) n.textContent = `Đang kiểm tra kỹ lại các nước quan trọng… ${Math.round(i / t * 100)}%`; return; }
+          if (partialShown) { const n = box && box.querySelector(".rv-refine-note"); if (n) n.textContent = reviewNoteText(rvStage, i, t); return; }
           if (box) box.innerHTML =
             `<p class="rv-progress">Phân tích tự động… ${i}/${t}</p><div class="rv-bar"><div style="width:${(i / t * 100).toFixed(0)}%"></div></div>`;
         },
         onPartial: (pr) => {
           partialShown = true;
+          rvStage = pr.stage || "verify";
           currentReview = pr;
-          if (box) { renderReview(box, pr); box.insertAdjacentHTML("afterbegin", `<p class="rv-progress rv-refine-note">Đang kiểm tra kỹ lại các nước quan trọng…</p>`); }
+          if (box) { renderReviewKeep(box, pr); box.insertAdjacentHTML("afterbegin", `<p class="rv-progress rv-refine-note">${reviewNoteText(rvStage, 0, 1).replace(/ 0%$/, "")}</p>`); }
         },
       }
     );
@@ -600,13 +601,25 @@ function showReviewStats(box, r) {
   box.insertAdjacentHTML("beforeend", `<p class="rv-progress" style="opacity:.6;font-size:.8rem">${txt}</p>`);
 }
 
+// Vẽ lại kết quả tạm mà không làm nhảy vị trí cuộn của người đang xem
+function renderReviewKeep(box, r) {
+  if (!box) return;
+  const l = box.querySelector(".rv-list");
+  const s1 = box.scrollTop, s2 = l ? l.scrollTop : 0;
+  renderReview(box, r);
+  box.scrollTop = s1;
+  const l2 = box.querySelector(".rv-list");
+  if (l2) l2.scrollTop = s2;
+}
+const reviewNoteText = (stage, i, t) => `${stage === "scan" ? "Đang phân tích tiếp các nước còn lại…" : "Đang kiểm tra kỹ lại các nước quan trọng…"} ${Math.round(i / t * 100)}%`;
+
 function renderReview(containerEl, r) {
   if (!containerEl) return;
   containerEl.classList.remove("collapsed");
   const badge = (cls) =>
     `<span class="rv-badge" style="background:${CLASS_INFO[cls].color}">${CLASS_INFO[cls].icon}</span>`;
   const pts = r.evals
-    .map((v, i) => `${(i / Math.max(1, r.evals.length - 1) * 100).toFixed(1)},${(100 - v).toFixed(1)}`)
+    .map((v, i) => `${(i / Math.max(1, (r.graphN || r.evals.length) - 1) * 100).toFixed(1)},${(100 - v).toFixed(1)}`)
     .join(" ");
   const rows = CLASS_ORDER
     .filter(c => (r.summary.w.counts[c] || 0) + (r.summary.b.counts[c] || 0) > 0)
@@ -1383,7 +1396,7 @@ function runReviewInBox(boxId, btnId) {
   }
   if (btn) btn.disabled = true;
   box.innerHTML = `<p class="rv-progress">Nyra đang phân tích… 0/0</p><div class="rv-bar"><div style="width:0%"></div></div>`;
-  let partialShown = false;
+  let partialShown = false, rvStage = "scan";
   (async () => {
     try {
       const r = await reviewGame(
@@ -1396,15 +1409,16 @@ function runReviewInBox(boxId, btnId) {
           Chess,
           timeMs: REVIEW_TIME_MS,
           onProgress: (i, t) => {
-            if (partialShown) { const n = box.querySelector(".rv-refine-note"); if (n) n.textContent = `Đang kiểm tra kỹ lại các nước quan trọng… ${Math.round(i / t * 100)}%`; return; }
+            if (partialShown) { const n = box.querySelector(".rv-refine-note"); if (n) n.textContent = reviewNoteText(rvStage, i, t); return; }
             box.innerHTML =
               `<p class="rv-progress">Nyra đang phân tích… ${i}/${t}</p><div class="rv-bar"><div style="width:${(i / t * 100).toFixed(0)}%"></div></div>`;
           },
           onPartial: (pr) => {
             partialShown = true;
+            rvStage = pr.stage || "verify";
             currentReview = pr;
-            renderReview(box, pr);
-            box.insertAdjacentHTML("afterbegin", `<p class="rv-progress rv-refine-note">Đang kiểm tra kỹ lại các nước quan trọng…</p>`);
+            renderReviewKeep(box, pr);
+            box.insertAdjacentHTML("afterbegin", `<p class="rv-progress rv-refine-note">${reviewNoteText(rvStage, 0, 1).replace(/ 0%$/, "")}</p>`);
           },
         }
       );
