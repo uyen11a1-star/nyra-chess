@@ -1,6 +1,6 @@
 import { Chess } from "./vendor/chess.js?v=1";
 import { getNyraMove, hasLocalNyra } from "./nyra-client.js?v=5";
-import { reviewGame, CLASS_INFO, CLASS_ORDER, judgeTry, makeAnalyzer, REVIEW_TIME_MS, REFINE_MS } from "./nyra-review.js?v=12";
+import { reviewGame, CLASS_INFO, CLASS_ORDER, judgeTry, makeAnalyzer, REVIEW_TIME_MS, REFINE_MS } from "./nyra-review.js?v=13";
 import { initArena } from "./arena.js?v=2";
 import { StockfishEngine, SF_LEVELS } from "./stockfish-client.js?v=2";
 import { initI18n, getLang } from "./i18n.js?v=6";
@@ -592,7 +592,11 @@ async function runAutoReview() {
 function showReviewStats(box, r) {
   if (!box || !r || !r.stats) return;
   const s = r.stats;
-  const txt = s.cached ? "Kết quả lấy từ bộ nhớ (phân tích trước đó)" : `Phân tích mất ${s.sec.toFixed(1)} giây · ${s.workers} luồng`;
+  let txt = s.cached ? "Kết quả lấy từ bộ nhớ (phân tích trước đó)" : `Phân tích mất ${s.sec.toFixed(1)} giây · ${s.workers} luồng`;
+  if (!s.cached && s.busySec != null) {
+    const util = s.busySec / Math.max(0.1, s.sec);
+    txt += ` · quét ${s.firstSec.toFixed(1)}s, kiểm tra lại ${(s.sec - s.firstSec).toFixed(1)}s · trung bình ${util.toFixed(1)}/${s.workers} luồng bận · ${(s.busySec / Math.max(1, s.items) * 1000).toFixed(0)}ms/thế`;
+  }
   box.insertAdjacentHTML("beforeend", `<p class="rv-progress" style="opacity:.6;font-size:.8rem">${txt}</p>`);
 }
 

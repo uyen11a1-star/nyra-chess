@@ -127,7 +127,8 @@ export function makeAnalyzer(nWorkers = pickWorkers()) {
     w.onerror = () => { for (const [, p] of pend) p.rej(new Error("Worker lỗi")); pend.clear(); };
     ws.push(w);
   }
-  const send = (w, fen, timeMs, played, reset = true) => new Promise((res, rej) => { const i = ++id; pend.set(i, { res, rej }); w.postMessage({ id: i, fen, timeMs, type: "analyze", played: played || "", reset, vstep: VSTEP }); });
+  let busyMs = 0;  // tổng thời gian các worker thật sự bận (để biết máy chạy song song hiệu quả cỡ nào)
+  const send = (w, fen, timeMs, played, reset = true) => new Promise((res, rej) => { const i = ++id; const t0 = performance.now(); pend.set(i, { res: (v) => { busyMs += performance.now() - t0; res(v); }, rej }); w.postMessage({ id: i, fen, timeMs, type: "analyze", played: played || "", reset, vstep: VSTEP }); });
   return {
     analyze: (fen, timeMs, played) => send(ws[0], fen, timeMs, played),
     // items: [{fen, timeMs, played}] -> kết quả theo đúng thứ tự.
@@ -150,6 +151,7 @@ export function makeAnalyzer(nWorkers = pickWorkers()) {
       return out;
     },
     size: ws.length,
+    get busyMs() { return busyMs; },
     close: () => ws.forEach((w) => w.terminate()),
   };
 }
@@ -192,13 +194,15 @@ export async function reviewGame(moves, opts = {}) {
   if (hit) { if (onProgress) onProgress(1, 1); const c = JSON.parse(JSON.stringify(hit)); c.stats = { ...(c.stats || {}), cached: true }; return c; }
   const t0 = Date.now();
   const res = await reviewGameFresh(moves, { ...opts, timeMs, maxRefine, refineX, chunk1, chunk2 });
-  res.stats = { sec: (Date.now() - t0) / 1000, workers: res.stats ? res.stats.workers : 0 };
+  res.stats = { ...(res.stats || {}), sec: (Date.now() - t0) / 1000 };
   saveCache(key, res);
   return res;
 }
 
 async function reviewGameFresh(moves, { Chess, timeMs = REVIEW_TIME_MS, maxRefine = DEF_REFINE, refineX = DEF_REFINE_X, chunk1 = REVIEW_CHUNK, chunk2 = REFINE_CHUNK, onProgress, onPartial, analyzer } = {}) {
   const az = analyzer || makeAnalyzer();
+  const T0 = performance.now();
+  let tFirst = 0;
   let wakeLock = null;
   try { if (typeof navigator !== "undefined" && navigator.wakeLock) wakeLock = await navigator.wakeLock.request("screen"); } catch (e) { /* không bắt buộc */ }  // giữ màn hình sáng để trình duyệt không hạ tốc độ khi đang phân tích
   try {
@@ -278,6 +282,7 @@ async function reviewGameFresh(moves, { Chess, timeMs = REVIEW_TIME_MS, maxRefin
       for (const k of ["w", "b"]) sm[k].acc = sm[k].n ? sm[k].acc / sm[k].n : 0;
       return { moves: mv, summary: sm, evals: [...evArr] };
     };
+    tFirst = (performance.now() - T0) / 1000;
     const susp = out.filter((m) => m.sacCand && m.loss <= 15).sort((a, b) => a.loss - b.loss).slice(0, 5);
     const heavy = out.filter((m) => ["blunder", "mistake", "brilliant", "great"].includes(m.cls) || m.sacrifice).sort((a, b) => b.loss - a.loss);
     const pick = [];
@@ -299,7 +304,7 @@ async function reviewGameFresh(moves, { Chess, timeMs = REVIEW_TIME_MS, maxRefin
       an.forEach((a, j) => { const t = turnOf(j); let cp = a.over ? (a.mated ? -MATE_CP : 0) : toCp(a.score); if (t === "b") cp = -cp; evals.push(winPercent(cp)); });
     }
     const fin = build(out, evals);
-    fin.stats = { workers: az.size || 0 };
+    fin.stats = { workers: az.size || 0, firstSec: tFirst, busySec: (az.busyMs || 0) / 1000, items: total };
     return fin;
   } finally {
     if (!analyzer) az.close();
