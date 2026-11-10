@@ -1,6 +1,6 @@
 import { Chess } from "./vendor/chess.js?v=1";
 import { getNyraMove, hasLocalNyra } from "./nyra-client.js?v=5";
-import { reviewGame, CLASS_INFO, CLASS_ORDER, judgeTry, makeAnalyzer, REVIEW_TIME_MS } from "./nyra-review.js?v=10";
+import { reviewGame, CLASS_INFO, CLASS_ORDER, judgeTry, makeAnalyzer, REVIEW_TIME_MS, REFINE_MS } from "./nyra-review.js?v=11";
 import { initArena } from "./arena.js?v=2";
 import { StockfishEngine, SF_LEVELS } from "./stockfish-client.js?v=2";
 import { initI18n, getLang } from "./i18n.js?v=5";
@@ -580,12 +580,20 @@ async function runAutoReview() {
       }
     );
     renderReview($("reviewResult"), currentReview);
+    showReviewStats($("reviewResult"), currentReview);
   } catch (e) {
     if (box) box.innerHTML = `<div class="rv-empty">Không phân tích được tự động: ${escapeHtml(e.message)}</div>`;
     currentReview = null;
   } finally {
     if (btn) btn.disabled = false;
   }
+}
+
+function showReviewStats(box, r) {
+  if (!box || !r || !r.stats) return;
+  const s = r.stats;
+  const txt = s.cached ? "Kết quả lấy từ bộ nhớ (phân tích trước đó)" : `Phân tích mất ${s.sec.toFixed(1)} giây · ${s.workers} luồng`;
+  box.insertAdjacentHTML("beforeend", `<p class="rv-progress" style="opacity:.6;font-size:.8rem">${txt}</p>`);
 }
 
 function renderReview(containerEl, r) {
@@ -1010,7 +1018,7 @@ async function tryPlay(panel, from, to) {
     if (rev && rev.uci === uci && currentReview.evals) {
       rv = { ...rev, wpBeforeWhite: currentReview.evals[t.ply], wpAfterWhite: currentReview.evals[t.ply + 1] };
     } else {
-      rv = await judgeTry(Chess, t.fen, uci, { analyzer: getTryAz(), timeMs: Math.round(REVIEW_TIME_MS * 2.5) });
+      rv = await judgeTry(Chess, t.fen, uci, { analyzer: getTryAz(), timeMs: REFINE_MS });
     }
     if (panel._try !== t) return;
     t.done.rv = rv;
@@ -1398,6 +1406,7 @@ function runReviewInBox(boxId, btnId) {
       );
       currentReview = r;
       renderReview(box, r);
+      showReviewStats(box, r);
     } catch (e) {
       box.innerHTML = `<div class="rv-empty">Không phân tích được: ${escapeHtml(e.message)}</div>`;
       currentReview = null;

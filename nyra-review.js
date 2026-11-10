@@ -144,20 +144,23 @@ export function makeAnalyzer(nWorkers = pickWorkers()) {
       }));
       return out;
     },
+    size: ws.length,
     close: () => ws.forEach((w) => w.terminate()),
   };
 }
 
 // moves: [{from,to,promotion}]. Trả về { moves, summary, evals }
-const DEF_REFINE = 12, DEF_REFINE_X = 2.5;
+// Đã đo trên 3 ván thật so với một lần phân tích rất sâu (1600): nghĩ nhẹ 150 cho mọi thế rồi kiểm tra lại 12 nước quan trọng ở mức 1000
+// cho độ khớp ngang bản cũ (400 + 1000x2.5) nhưng nhanh hơn 25-45%.
+export const REVIEW_TIME_MS = 150, REFINE_MS = 1000;
+const DEF_REFINE = 12, DEF_REFINE_X = REFINE_MS / REVIEW_TIME_MS;
 export const REVIEW_CHUNK = 1, REFINE_CHUNK = 1;
-export const REVIEW_TIME_MS = 400;  // đủ thời gian để kết quả ổn định (đã đo: lặp lại cho kết quả y hệt)
-const REVIEW_VER = "r5";
+const REVIEW_VER = "r6";
 // Đồng hồ ảo: mỗi lần engine hỏi giờ nhích 1,3ms -> giới hạn thời gian thành giới hạn số nút tìm kiếm, kết quả y hệt ở mọi máy và mọi lần chạy
 const VSTEP = 1.3e6;
 
 // Bộ nhớ kết quả: cùng một ván (cùng dãy nước + cùng thông số) luôn trả về đúng kết quả đã tính, không tính lại
-const CACHE_KEY = "nyra_review_cache_v5", CACHE_MAX = 24;
+const CACHE_KEY = "nyra_review_cache_v6", CACHE_MAX = 24;
 const memCache = new Map();
 function loadCache() { try { return JSON.parse(localStorage.getItem(CACHE_KEY) || "{}"); } catch (e) { return {}; } }
 function saveCache(key, data) {
@@ -181,8 +184,10 @@ export async function reviewGame(moves, opts = {}) {
   const { timeMs = REVIEW_TIME_MS, maxRefine = DEF_REFINE, refineX = DEF_REFINE_X, chunk1 = REVIEW_CHUNK, chunk2 = REFINE_CHUNK, onProgress } = opts;
   const key = gameKey(moves, [timeMs, maxRefine, refineX, chunk1, chunk2]);
   const hit = readCache(key);
-  if (hit) { if (onProgress) onProgress(1, 1); return JSON.parse(JSON.stringify(hit)); }
+  if (hit) { if (onProgress) onProgress(1, 1); const c = JSON.parse(JSON.stringify(hit)); c.stats = { ...(c.stats || {}), cached: true }; return c; }
+  const t0 = Date.now();
   const res = await reviewGameFresh(moves, { ...opts, timeMs, maxRefine, refineX, chunk1, chunk2 });
+  res.stats = { sec: (Date.now() - t0) / 1000, workers: res.stats ? res.stats.workers : 0 };
   saveCache(key, res);
   return res;
 }
@@ -286,7 +291,9 @@ async function reviewGameFresh(moves, { Chess, timeMs = REVIEW_TIME_MS, maxRefin
       evals.length = 0;
       an.forEach((a, j) => { const t = turnOf(j); let cp = a.over ? (a.mated ? -MATE_CP : 0) : toCp(a.score); if (t === "b") cp = -cp; evals.push(winPercent(cp)); });
     }
-    return build(out, evals);
+    const fin = build(out, evals);
+    fin.stats = { workers: az.size || 0 };
+    return fin;
   } finally {
     if (!analyzer) az.close();
   }
@@ -295,7 +302,7 @@ async function reviewGameFresh(moves, { Chess, timeMs = REVIEW_TIME_MS, maxRefin
 // Chấm MỘT nước tuỳ ý trong thế cờ `fen` (dùng cho chế độ "thử nước"): cùng cách phân loại với reviewGame.
 // Trả về { side, san, uci, cls, loss, bestSan, bestUci, sacrifice, wpBeforeWhite, wpAfterWhite, fenAfter }
 const tryMem = new Map();
-export async function judgeTry(Chess, fen, uci, { analyzer, timeMs = REVIEW_TIME_MS } = {}) {
+export async function judgeTry(Chess, fen, uci, { analyzer, timeMs = REFINE_MS } = {}) {
   const tk = REVIEW_VER + "|" + timeMs + "|" + fen + "|" + uci;
   if (tryMem.has(tk)) return { ...tryMem.get(tk) };
   const out = await judgeTryFresh(Chess, fen, uci, { analyzer, timeMs });
